@@ -56,36 +56,35 @@
   .board-open { grid-column: 1 / -1; justify-self: start; margin-top: 4px; }
 }
 
-/* 5h window overlay (components/WindowOverlay.tsx), opened from the limits pill */
-.window-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 95;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 72px 16px 24px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(3px);
-}
-.window-overlay-panel {
-  width: min(1180px, 100%);
+/* 5h window menu (components/WindowMenu.tsx): a panel out of the limits pill, like a menu bar item */
+.window-menu { position: relative; align-self: center; }
+.window-menu.open .limits-pill.clickable { background: var(--c-bg-hover); }
+.window-pop {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: -10px;
+  z-index: 70;
+  width: min(620px, calc(100vw - 32px));
   max-height: calc(100vh - 96px);
   overflow-y: auto;
-  padding: 16px;
-  border-radius: var(--radius-lg);
-  background: var(--c-bg);
-  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  padding: 16px 18px;
+  background: var(--c-bg-panel);
+  border: 1px solid var(--c-hairline-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: window-pop-in 140ms ease-out;
 }
-.window-overlay-head { display: flex; align-items: center; gap: 12px; }
-.window-overlay-head .live-burn { margin-left: 0; }
-.window-overlay-close {
-  margin-left: auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  font-size: 18px;
-  color: var(--c-text-dim);
+@keyframes window-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+/* the panel is the card: the 5h block inside drops its own (.page gives it the page's panel styles) */
+.window-pop.page { gap: 12px; }
+.window-pop.page .five-hour-session { padding: 0; background: none; box-shadow: none; border-radius: 0; }
+.window-pop.page .consumers-lists { grid-template-columns: minmax(0, 1fr); }
+.window-pop-foot { display: flex; padding-top: 10px; border-top: 1px solid var(--c-hairline); }
+.window-pop-foot .live-burn { margin-left: 0; }
+@media (max-width: 720px) {
+  .window-pop { position: fixed; top: 112px; left: 12px; right: 12px; width: auto; }
 }
-.window-overlay-close:hover { color: var(--c-text); background: var(--c-bg-hover); }

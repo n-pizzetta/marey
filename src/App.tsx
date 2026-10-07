@@ -20,7 +20,7 @@ import { detectedProviders, isProvider, resolveProvider, sessionProvider, type P
 import { useRecommendations } from "./utils/recommendations";
 import { PRODUCT_NAME } from "./utils/brand";
 import { needsYouCount } from "./utils/liveState";
-import { WindowOverlay } from "./components/WindowOverlay";
+import { WindowPanel } from "./components/WindowMenu";
 import type { Range } from "./utils/range";
 import { filterByRange, scopeToRange } from "./utils/range";
 import { registerProjects } from "./utils/fleetStats";
@@ -159,7 +159,6 @@ function App() {
   // Claude Code only for now: Codex rollouts expose no incidents yet.
   const allRecommendations = useRecommendations(generatedAt);
   const recommendations = showClaude ? allRecommendations : null;
-  const [windowOpen, setWindowOpen] = useState(false);
   const needsYou = useMemo(() => needsYouCount(providerSessions), [providerSessions]);
   // The browser tab says when sessions wait, so a background tab still tells.
   useEffect(() => {
@@ -372,7 +371,14 @@ function App() {
         onProviderChange={changeProvider}
         showClaude={showClaude}
         needsYou={needsYou}
-        onOpenWindow={() => setWindowOpen(true)}
+        windowPanel={(close) => (
+          <WindowPanel
+            limitSessions={limitSessions}
+            sessions={providerSessions}
+            limits={limits}
+            onSelectSession={(id) => { close(); setSelectedId(id); }}
+          />
+        )}
         sessionCount={filtered.length}
         healthIssues={healthIssues}
         unseenUnlocks={page === "badges" ? 0 : progress.unseen.size}
@@ -495,15 +501,6 @@ function App() {
           />
         )}
       </main>
-      {showClaude && windowOpen && (
-        <WindowOverlay
-          limitSessions={limitSessions}
-          sessions={providerSessions}
-          limits={limits}
-          onClose={() => setWindowOpen(false)}
-          onSelectSession={setSelectedId}
-        />
-      )}
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay
           spike={analysisSpike}

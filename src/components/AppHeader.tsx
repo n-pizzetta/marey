@@ -3,7 +3,6 @@ import type { Level, Streak } from "../utils/gamify";
 import { PRODUCT_NAME } from "../utils/brand";
 import { keepFocus } from "../utils/keepFocus";
 import { NAV_PAGES, type Page } from "../utils/pages";
-import { LimitsPill } from "./LimitsGauge";
 import { BrandMark } from "./BrandMark";
 import { ParseErrors } from "./ParseErrors";
 import { ProfileMenu } from "./ProfileMenu";
@@ -11,6 +10,7 @@ import { UpdateNotice } from "./UpdateNotice";
 import type { Agent } from "../types";
 import type { Provider } from "../utils/providers";
 import { ProviderSwitcher } from "./ProviderSwitcher";
+import { WindowMenu } from "./WindowMenu";
 
 export interface ReportStatus {
   exists: boolean;
@@ -26,7 +26,8 @@ interface Props {
   showClaude: boolean;
   /** Running sessions waiting on the user, shown on the Now tab. */
   needsYou: number;
-  onOpenWindow: () => void;
+  /** The panel the limits pill opens (the current 5h window); `close` hides it. */
+  windowPanel: (close: () => void) => ReactNode;
   /** Sessions in the scope, shown on the Sessions tab. */
   sessionCount: number;
   /** Failing or warning health checks in the scope, shown on the Health tab. */
@@ -79,7 +80,7 @@ export function AppHeader({
   onProviderChange,
   showClaude,
   needsYou,
-  onOpenWindow,
+  windowPanel,
   sessionCount,
   healthIssues,
   unseenUnlocks,
@@ -133,7 +134,7 @@ export function AppHeader({
 
       <div className="app-header-right">
         <UpdateNotice />
-        {showClaude && <LimitsPill onOpen={onOpenWindow} />}
+        {showClaude && <WindowMenu>{windowPanel}</WindowMenu>}
         {parseErrors && parseErrors.length > 0 && <ParseErrors errors={parseErrors} />}
         <ProfileMenu
           level={level}
