@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { limitColor, useRateLimits, type LimitWindow } from "../utils/rateLimits";
 import { FIVE_HOUR_MS } from "../utils/fleetStats";
 
@@ -28,12 +28,22 @@ function elapsedFrac(w: LimitWindow, spanMs: number, now: number): number | null
   return Math.min(1, Math.max(0, 1 - (w.resetsAt - now) / spanMs));
 }
 
+/** A button that opens the 5h window when the pill has somewhere to go, else a plain box. */
+function Shell({ onOpen, className, label, title, children }: { onOpen?: () => void; className: string; label?: string; title?: string; children: ReactNode }) {
+  if (!onOpen) return <div className={className} aria-label={label} title={title}>{children}</div>;
+  return (
+    <button className={`${className} clickable`} onClick={onOpen} aria-label={label ? `${label}: open the 5h window` : "Open the 5h window"} title={title ?? "Open the current 5h window"}>
+      {children}
+    </button>
+  );
+}
+
 /**
  * The 5h and 7-day usage windows, rendered in the top bar and in the session view so they are
  * always on screen. The tick on each bar marks how much of the window has elapsed: a fill past
  * the tick means usage is running faster than time.
  */
-export function LimitsPill() {
+export function LimitsPill({ onOpen }: { onOpen?: () => void } = {}) {
   const limits = useRateLimits();
   const now = useNow();
   const rows = [
@@ -43,14 +53,14 @@ export function LimitsPill() {
 
   if (rows.length === 0) {
     return (
-      <div className="limits-pill off" title="Run /marey:limits in Claude Code to connect your real 5h and 7-day limits">
+      <Shell onOpen={onOpen} className="limits-pill off" title="Run /marey:limits in Claude Code to connect your real 5h and 7-day limits">
         <span className="limits-pill-label">Claude limits · not connected</span>
-      </div>
+      </Shell>
     );
   }
 
   return (
-    <div className="limits-pill" aria-label="Claude Code usage limits">
+    <Shell onOpen={onOpen} className="limits-pill" label="Claude Code usage limits">
       <span className="limits-pill-label">Claude</span>
       {rows.map(({ key, window: w, spanMs }) => {
         const frac = Math.min(1, w.usedPct / 100);
@@ -74,6 +84,6 @@ export function LimitsPill() {
           </span>
         );
       })}
-    </div>
+    </Shell>
   );
 }

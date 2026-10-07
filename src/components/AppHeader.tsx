@@ -24,6 +24,9 @@ interface Props {
   provider: Provider;
   onProviderChange: (provider: Provider) => void;
   showClaude: boolean;
+  /** Running sessions waiting on the user, shown on the Now tab. */
+  needsYou: number;
+  onOpenWindow: () => void;
   /** Sessions in the scope, shown on the Sessions tab. */
   sessionCount: number;
   /** Failing or warning health checks in the scope, shown on the Health tab. */
@@ -75,6 +78,8 @@ export function AppHeader({
   provider,
   onProviderChange,
   showClaude,
+  needsYou,
+  onOpenWindow,
   sessionCount,
   healthIssues,
   unseenUnlocks,
@@ -108,6 +113,9 @@ export function AppHeader({
               {NAV_ICONS[p.id]}
             </svg>
             {p.label}
+            {p.id === "now" && needsYou > 0 && (
+              <span className="app-nav-count warn mono tabular" title={`${needsYou} session${needsYou > 1 ? "s" : ""} waiting for you`}>{needsYou}</span>
+            )}
             {p.id === "sessions" && <span className="app-nav-count mono tabular">{sessionCount}</span>}
             {p.id === "health" && healthIssues > 0 && (
               <span className="app-nav-count warn mono tabular" title={`${healthIssues} check${healthIssues > 1 ? "s" : ""} to look at`}>
@@ -125,7 +133,7 @@ export function AppHeader({
 
       <div className="app-header-right">
         <UpdateNotice />
-        {showClaude && <LimitsPill />}
+        {showClaude && <LimitsPill onOpen={onOpenWindow} />}
         {parseErrors && parseErrors.length > 0 && <ParseErrors errors={parseErrors} />}
         <ProfileMenu
           level={level}

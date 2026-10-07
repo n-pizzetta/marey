@@ -11,6 +11,8 @@
   align-self: center;
   gap: 16px;
 }
+.limits-pill.clickable { padding: 4px 10px; margin: -4px -10px; border-radius: 999px; cursor: pointer; }
+.limits-pill.clickable:hover { background: var(--c-bg-hover); }
 .limits-pill-item { display: inline-flex; align-items: center; gap: 7px; }
 .limits-pill-label { font-size: var(--fs-md); color: var(--c-text-dim); }
 .limits-pill-bar {

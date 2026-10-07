@@ -64,6 +64,15 @@ export interface ToolCall {
   orphan?: boolean;
 }
 
+/** needs-you: an open question, plan or permission prompt; your-turn: done, waiting for a prompt; working: busy. */
+export interface LiveState {
+  state: "needs-you" | "your-turn" | "working";
+  reason?: "question" | "plan" | "permission";
+  /** The question, the plan's title, the call to allow or in progress, or the start of the last reply. */
+  text: string | null;
+  since: string;
+}
+
 export interface Session {
   id: string;
   /** Absent in mock data and older payloads: Claude Code. */
@@ -119,6 +128,10 @@ export interface Session {
   /** Running sessions: when the Claude Code process started (pid file). */
   processStartedAt?: string;
   runningTool?: { tool: string; preview: string; t: number } | null;
+  /** Running sessions: what the session needs from the user (scripts/parse-sessions.mjs, liveStateOf). */
+  liveState?: LiveState | null;
+  /** Running Claude Code sessions: the name Claude Code gives them (pid file). */
+  liveName?: string;
   clearedFrom?: string;
   clearedInto?: string;
   quality?: SessionQuality | null;

@@ -18,6 +18,9 @@ import { loadSessions, loadSessionDetail } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
 import { useRecommendations } from "./utils/recommendations";
+import { PRODUCT_NAME } from "./utils/brand";
+import { needsYouCount } from "./utils/liveState";
+import { WindowOverlay } from "./components/WindowOverlay";
 import type { Range } from "./utils/range";
 import { filterByRange, scopeToRange } from "./utils/range";
 import { registerProjects } from "./utils/fleetStats";
@@ -156,6 +159,12 @@ function App() {
   // Claude Code only for now: Codex rollouts expose no incidents yet.
   const allRecommendations = useRecommendations(generatedAt);
   const recommendations = showClaude ? allRecommendations : null;
+  const [windowOpen, setWindowOpen] = useState(false);
+  const needsYou = useMemo(() => needsYouCount(providerSessions), [providerSessions]);
+  // The browser tab says when sessions wait, so a background tab still tells.
+  useEffect(() => {
+    document.title = needsYou > 0 ? `(${needsYou}) ${PRODUCT_NAME}` : PRODUCT_NAME;
+  }, [needsYou]);
   const openProgress = () => {
     setSelectedIdInternal(null);
     setPage("badges");
@@ -362,6 +371,8 @@ function App() {
         provider={provider}
         onProviderChange={changeProvider}
         showClaude={showClaude}
+        needsYou={needsYou}
+        onOpenWindow={() => setWindowOpen(true)}
         sessionCount={filtered.length}
         healthIssues={healthIssues}
         unseenUnlocks={page === "badges" ? 0 : progress.unseen.size}
@@ -411,12 +422,8 @@ function App() {
             showClaude={showClaude}
             recommendations={recommendations}
             onOpenHealth={() => setPage("health")}
-            limitSessions={limitSessions}
-            limits={limits}
-            badges={badges}
             onSelectSession={setSelectedId}
             onShowAllSessions={() => setPage("sessions")}
-            onOpenProgress={openProgress}
           />
         )}
         {page === "sessions" && (
@@ -488,6 +495,15 @@ function App() {
           />
         )}
       </main>
+      {showClaude && windowOpen && (
+        <WindowOverlay
+          limitSessions={limitSessions}
+          sessions={providerSessions}
+          limits={limits}
+          onClose={() => setWindowOpen(false)}
+          onSelectSession={setSelectedId}
+        />
+      )}
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay
           spike={analysisSpike}
