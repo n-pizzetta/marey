@@ -1,6 +1,6 @@
 {
   "name": "marey",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Open the local Marey dashboard to replay and analyze Claude Code and Codex sessions.",
   "author": {
     "name": "Nathan Pizzetta",

@@ -6,22 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Now shows every running session by what it needs from you: a question or a plan to approve, done and waiting for your next prompt, or working, with how long and "Open terminal". The Now tab and the browser tab count the sessions that need you.
-- Recommendations backed by your own sessions, at the top of Now and Health: recurring setup errors (unmatched zsh globs, a shared Playwright browser, sandbox writes…), denied actions with narrow allow rules for the safe ones, and sessions left waiting on you, each in plain words with the sessions behind it, a line to copy and a prompt to paste into Claude Code. Marey never applies a fix itself.
-- A global provider switcher lists detected Claude Code and Codex sessions, remembers the selection, and scopes every page. Claude limits and badges are labelled explicitly and hidden in Codex views, which show today's Codex activity instead.
-- `/marey:limits` also shows usage limits in Codex and Copilot CLI, through their own status line items: the context used and the 5h and weekly limits after the model in Codex (`[tui] status_line`), the plan usage in Copilot CLI's footer (`footer.showQuota`). `--uninstall` reverts both. If you already ran `/marey:limits`, run it once more: an update refreshes the Claude Code status line, not the other CLIs' settings.
-
-### Changed
-
-- The current 5h window opens from the limits pill instead of sitting on Now, and the badges strip leaves the home page (Progress keeps it).
-
-### Fixed
-
-- Codex installations now expose native `replay` and `update` skills through an explicit plugin manifest. The dashboard launcher resolves bundled scripts from the installed package, and updates use Codex's plugin manager.
-- `/marey:replay` no longer prints `no matches found: …/marey-*.log` under zsh: old logs are cleared with `find` instead of a shell glob.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -34,6 +18,24 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.8.0] — 2026-10-12
+
+### Added
+
+- Recommendations backed by your own sessions, at the top of Now and Health: recurring setup errors (unmatched zsh globs, a shared Playwright browser, sandbox writes…), denied actions with narrow allow rules for the safe ones, and sessions left waiting on you, each in plain words with the sessions behind it, a line to copy and a prompt to paste into Claude Code. Marey never applies a fix itself.
+- Now shows every running session by what it needs from you: a question or a plan to approve, done and waiting for your next prompt, or working, with how long and "Open terminal". The Now tab and the browser tab count the sessions that need you.
+- A global provider switcher lists detected Claude Code and Codex sessions, remembers the selection, and scopes every page. Claude limits and badges are labelled explicitly and hidden in Codex views, which show today's Codex activity instead.
+- `/marey:limits` also shows usage limits in Codex and Copilot CLI, through their own status line items: the context used and the 5h and weekly limits after the model in Codex (`[tui] status_line`), the plan usage in Copilot CLI's footer (`footer.showQuota`). `--uninstall` reverts both. If you already ran `/marey:limits`, run it once more: an update refreshes the Claude Code status line, not the other CLIs' settings.
+
+### Changed
+
+- The current 5h window opens from the limits pill instead of sitting on Now, and the badges strip leaves the home page (Progress keeps it).
+
+### Fixed
+
+- Codex installations now expose native `replay` and `update` skills through an explicit plugin manifest. The dashboard launcher resolves bundled scripts from the installed package, and updates use Codex's plugin manager.
+- `/marey:replay` no longer prints `no matches found: …/marey-*.log` under zsh: old logs are cleared with `find` instead of a shell glob.
 
 ## [0.7.0] — 2026-10-06
 

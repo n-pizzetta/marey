@@ -1,7 +1,7 @@
 {
   "name": "marey",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Visual debugger and analytics dashboard for Claude Code and Codex sessions",
   "keywords": [
     "claude-code",
