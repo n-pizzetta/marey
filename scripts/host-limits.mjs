@@ -1,11 +1,13 @@
 /**
- * Usage limits in the status lines of the other CLIs Marey reads, via their own native items.
+ * Usage limits (and, in Codex, the context used) in the status lines of the other CLIs Marey
+ * reads, via their own native items.
  *
  * Neither CLI can run Claude Code's kind of wrapper for this: Codex's status line is a list of
  * built-in items (no custom command), and Copilot CLI's `statusLine.command` payload carries no
  * limits. Both can already show their own limits, just not by default:
- *   - Codex: `[tui] status_line` gets `five-hour-limit` and `weekly-limit` after the model item
- *     (`GPT-6-Astra high · 5h 42% left · weekly 76% left · ~/project`),
+ *   - Codex: `[tui] status_line` gets `context-used`, `five-hour-limit` and `weekly-limit` after
+ *     the model item (`GPT-6-Astra high · 5h 42% left · weekly 76% left · ~/project`; Codex omits
+ *     the context until the session's first reply),
  *   - Copilot CLI: `footer.showQuota` (`Plan: 370/5,000 (7% used)`), set through `copilot config`,
  *     which also reads the comments its settings.json may contain.
  *
@@ -18,6 +20,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export const LIMIT_ITEMS = ["five-hour-limit", "weekly-limit"];
+/** What Marey adds to Codex's status line: the share of the context window used, then the limits. */
+export const CODEX_ITEMS = ["context-used", ...LIMIT_ITEMS];
 /** Codex's own default (0.161), written out when the user never picked items. */
 export const CODEX_DEFAULT_ITEMS = ["model-with-reasoning", "current-dir", "thread-name"];
 const MODEL_ITEMS = ["model-with-reasoning", "model"];
@@ -68,9 +72,9 @@ function locate(lines) {
 
 const statusLine = (items) => `status_line = [${items.map((s) => JSON.stringify(s)).join(", ")}]`;
 
-/** The limit items, inserted right after the model item (or first) of `items`. */
-export function withLimitItems(items) {
-  const missing = LIMIT_ITEMS.filter((i) => !items.includes(i));
+/** Marey's items, inserted right after the model item (or first) of `items`. */
+export function withCodexItems(items) {
+  const missing = CODEX_ITEMS.filter((i) => !items.includes(i));
   const model = items.findIndex((i) => MODEL_ITEMS.includes(i));
   const out = [...items];
   out.splice(model + 1, 0, ...missing);
@@ -78,16 +82,16 @@ export function withLimitItems(items) {
 }
 
 /**
- * config.toml with the limit items in `[tui] status_line`.
+ * config.toml with Marey's items in `[tui] status_line`.
  * @returns {{ toml: string, previous: string[] | null, applied: string[] } | { unchanged: true } | { error: string }}
  */
-export function addCodexLimits(toml) {
+export function addCodexItems(toml) {
   const lines = toml.split("\n");
   const at = locate(lines);
   if (!at) return { error: "`tui` is set in a form Marey doesn't edit" };
   const previous = at.items ?? null;
-  if (previous && LIMIT_ITEMS.every((i) => previous.includes(i))) return { unchanged: true };
-  const applied = withLimitItems(previous ?? CODEX_DEFAULT_ITEMS);
+  if (previous && CODEX_ITEMS.every((i) => previous.includes(i))) return { unchanged: true };
+  const applied = withCodexItems(previous ?? CODEX_DEFAULT_ITEMS);
   if (at.key !== undefined) lines.splice(at.key, at.end - at.key + 1, statusLine(applied));
   else if (at.table !== null) lines.splice(at.table + 1, 0, statusLine(applied));
   else {
@@ -136,12 +140,15 @@ function writeState(file, state) {
 function installCodex(state) {
   const path = codexConfig();
   if (!existsSync(dirname(path))) return null;
-  const result = addCodexLimits(existsSync(path) ? readFileSync(path, "utf8") : "");
-  if (result.error) return `Codex: ${result.error} in ${path}; add "five-hour-limit" and "weekly-limit" with /statusline in Codex.`;
-  if (result.unchanged) return "Codex: the status line already shows the 5h and weekly limits.";
+  const result = addCodexItems(existsSync(path) ? readFileSync(path, "utf8") : "");
+  const items = CODEX_ITEMS.map((i) => `"${i}"`).join(", ");
+  if (result.error) return `Codex: ${result.error} in ${path}; add ${items} with /statusline in Codex.`;
+  if (result.unchanged) return "Codex: the status line already shows the context used and the 5h and weekly limits.";
   writeConfig(path, result.toml);
-  state.codex = { previous: result.previous, applied: result.applied };
-  return `Codex: the status line now shows the 5h and weekly limits (${path}, backed up to config.toml.marey.bak). Applies to new Codex sessions.`;
+  // Upgrading from an earlier /marey:limits that added only the limits: --uninstall still goes back to the user's own line.
+  const earlier = state.codex && JSON.stringify(state.codex.applied) === JSON.stringify(result.previous);
+  state.codex = { previous: earlier ? state.codex.previous : result.previous, applied: result.applied };
+  return `Codex: the status line now shows the context used and the 5h and weekly limits (${path}, backed up to config.toml.marey.bak). Applies to new Codex sessions.`;
 }
 
 function uninstallCodex(state) {
