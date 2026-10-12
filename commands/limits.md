@@ -3,7 +3,7 @@ description: Connect Marey to your real Claude usage limits (5h / 7d) via the st
 argument-hint: "[--uninstall]"
 ---
 
-Install the Marey status line wrapper so the dashboard can show the real 5-hour and 7-day usage limits (the same numbers as `/usage`), plus the context fill and prompt-cache state of live sessions (a keep going / compact / clear verdict). After a plugin update, `/marey:replay` refreshes the installed wrapper, so there is no need to run this again.
+Install the Marey status line wrapper so the dashboard can show the real 5-hour and 7-day usage limits (the same numbers as `/usage`), plus the context fill and prompt-cache state of live sessions (a keep going / compact / clear verdict). After a plugin update, `/marey:replay` refreshes the installed wrapper, so there is no need to run this again for Claude Code. Codex's and Copilot CLI's settings are only changed when this command runs.
 
 Execute this command:
 

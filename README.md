@@ -137,7 +137,7 @@ If Codex or Copilot CLI is installed, the same command turns on the limits in th
 - Codex: `context-used`, `five-hour-limit` and `weekly-limit` are added to `[tui] status_line` in `~/.codex/config.toml` (backed up first), after the model: `GPT-6-Astra high · 5h 42% left · weekly 76% left · ~/project`. Codex shows the context used from the session's first reply. It doesn't expose its prompt cache, so there is no cache countdown there.
 - Copilot CLI: `footer.showQuota` is turned on, so the footer shows `Plan: 370/5,000 (7% used)`.
 
-New sessions of either CLI pick it up. `--uninstall` puts both back as they were, unless you changed them since.
+New sessions of either CLI pick it up. `--uninstall` puts both back as they were, unless you changed them since. A plugin update refreshes the Claude Code wrapper on its own, but not these settings: run `/marey:limits` again to get what a new version adds here.
 
 Without it, the dashboard still shows tokens and cost for an inferred 5h window, just not the limit percentages.
 
