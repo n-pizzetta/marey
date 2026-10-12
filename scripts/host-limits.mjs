@@ -6,8 +6,7 @@
  * built-in items (no custom command), and Copilot CLI's `statusLine.command` payload carries no
  * limits. Both can already show their own limits, just not by default:
  *   - Codex: `[tui] status_line` gets `context-used`, `five-hour-limit` and `weekly-limit` after
- *     the model item (`GPT-6-Astra high · 5h 42% left · weekly 76% left · ~/project`; Codex omits
- *     the context until the session's first reply),
+ *     the model item (`GPT-6-Astra high · Context 12% used · 5h 42% left · weekly 76% left · ~/project`),
  *   - Copilot CLI: `footer.showQuota` (`Plan: 370/5,000 (7% used)`), set through `copilot config`,
  *     which also reads the comments its settings.json may contain.
  *
