@@ -11,7 +11,7 @@ versioning follows [SemVer](https://semver.org/).
 - Now shows every running session by what it needs from you: a question or a plan to approve, done and waiting for your next prompt, or working, with how long and "Open terminal". The Now tab and the browser tab count the sessions that need you.
 - Recommendations backed by your own sessions, at the top of Now and Health: recurring setup errors (unmatched zsh globs, a shared Playwright browser, sandbox writes…), denied actions with narrow allow rules for the safe ones, and sessions left waiting on you, each in plain words with the sessions behind it, a line to copy and a prompt to paste into Claude Code. Marey never applies a fix itself.
 - A global provider switcher lists detected Claude Code and Codex sessions, remembers the selection, and scopes every page. Claude limits and badges are labelled explicitly and hidden in Codex views, which show today's Codex activity instead.
-- `/marey:limits` also shows usage limits in Codex and Copilot CLI, through their own status line items: the 5h and weekly limits after the model in Codex (`[tui] status_line`), the plan usage in Copilot CLI's footer (`footer.showQuota`). `--uninstall` reverts both.
+- `/marey:limits` also shows usage limits in Codex and Copilot CLI, through their own status line items: the context used and the 5h and weekly limits after the model in Codex (`[tui] status_line`), the plan usage in Copilot CLI's footer (`footer.showQuota`). `--uninstall` reverts both.
 
 ### Changed
 
