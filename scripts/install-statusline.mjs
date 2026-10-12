@@ -10,12 +10,16 @@
  * setting to ~/.claude/marey/statusline.json and points `statusLine` at
  * the wrapper, which keeps rendering the previous status line. It also sets
  * `statusLine.refreshInterval` (unless already set) so the line updates while idle.
+ *
+ * Codex and Copilot CLI, when installed, get their own native limit items instead
+ * (host-limits.mjs); `--uninstall` reverts those too.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dataDir, legacyDataDir } from "./data-dir.mjs";
+import { setHostLimits } from "./host-limits.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -127,5 +131,9 @@ function uninstall() {
   console.log("[marey] status line removed" + (previous?.command ? `; restored: ${previous.command}` : "."));
 }
 
-if (process.argv.includes("--uninstall")) uninstall();
+// Other CLIs first, so a settings.json Marey can't parse (exit 1 below) doesn't block them.
+const uninstalling = process.argv.includes("--uninstall");
+mkdirSync(DIR, { recursive: true });
+for (const line of setHostLimits(DIR, { uninstall: uninstalling })) console.log(`[marey] ${line}`);
+if (uninstalling) uninstall();
 else install();

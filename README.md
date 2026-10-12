@@ -132,6 +132,13 @@ Claude Code only exposes your 5-hour and 7-day usage limits (the numbers behind 
 - A short `ctx ━━━───── 33% │ cache warm 59m` segment is appended to your status line, colored green / yellow / red by level. Hide it with `"verdict": false` in `~/.claude/marey/statusline.json`.
 - `statusLine.refreshInterval` is set to 30 seconds (unless you already set one) so the cache countdown keeps moving while the session is idle.
 
+If Codex or Copilot CLI is installed, the same command turns on the limits in their own status lines, which they can show but don't by default:
+
+- Codex: `five-hour-limit` and `weekly-limit` are added to `[tui] status_line` in `~/.codex/config.toml` (backed up first), after the model: `GPT-6-Astra high · 5h 42% left · weekly 76% left · ~/project`.
+- Copilot CLI: `footer.showQuota` is turned on, so the footer shows `Plan: 370/5,000 (7% used)`.
+
+New sessions of either CLI pick it up. `--uninstall` puts both back as they were, unless you changed them since.
+
 Without it, the dashboard still shows tokens and cost for an inferred 5h window, just not the limit percentages.
 
 </details>
@@ -179,7 +186,7 @@ Some clients also list the imported `source-command-update` alias alongside the 
 
 **3. Update in Codex.** Select **Marey → update**, or run `codex plugin marketplace upgrade marey` followed by `codex plugin add marey@marey` on clients supporting those commands. Otherwise use Codex's plugin management UI to refresh/update Marey. Reload the session, then invoke **replay** again to replace an older running dashboard.
 
-The status-line integration, `/marey:limits`, and capture hooks are **Claude Code-only**. The Codex plugin exposes the dashboard and update skills; it does not install a Claude status line or capture hooks. Marey's local dashboard state still lives in `~/.claude/marey/`, even when launched from Codex.
+The status-line wrapper, `/marey:limits`, and capture hooks are **Claude Code-only**. The Codex plugin exposes the dashboard and update skills. Running `/marey:limits` in Claude Code also turns on the 5h and weekly limits in Codex's own status line (see [As a Claude Code plugin](#as-a-claude-code-plugin)). Marey's local dashboard state still lives in `~/.claude/marey/`, even when launched from Codex.
 
 See OpenAI's [plugin packaging](https://developers.openai.com/plugins/build/plugins) and [skill invocation](https://learn.chatgpt.com/docs/build-skills) documentation for client support and discovery.
 

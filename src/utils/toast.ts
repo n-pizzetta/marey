@@ -1,4 +1,4 @@
-export const TOAST_EVENT = "claude-replay:toast";
+export const TOAST_EVENT = "marey:toast";
 
 /** A badge unlock or a level-up: tinted with the tier color, with an optional action. */
 export interface Achievement {
