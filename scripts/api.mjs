@@ -18,6 +18,7 @@ import { badgeStatePath, computeBadges, loadBadgeState, saveBadgeState } from ".
 import { dataDir } from "./data-dir.mjs";
 import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
+import { buildRecommendations } from "./recommendations.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -53,6 +54,7 @@ const cache = {
   byId: new Map(),
   errors: [],
   badges: null,
+  recommendations: null,
   /** Freshest usage limits read so far (`mergeLimits`): limits.json flips between sessions. */
   limits: null,
 };
@@ -86,6 +88,7 @@ async function runParser() {
     cache.byId = new Map(sessions.map((s) => [s.id, s]));
     cache.errors = errors;
     await updateBadges(sessions);
+    try { cache.recommendations = buildRecommendations(sessions); } catch (err) { console.error("[marey] recommendations error:", err); }
     // Serialize the list once per parse; the ETag lets polling clients get a 304.
     const list = JSON.stringify({ sessions: sessions.map(summarizeSession), errors, models: modelOverrides ?? {} });
     cache.listEtag = `"${createHash("sha1").update(list).digest("base64url")}"`;
@@ -316,6 +319,11 @@ async function handleApi(req, res) {
     } catch {
       return send(res, 404, "file not found");
     }
+  }
+
+  if (url === "/api/recommendations") {
+    res.setHeader("cache-control", "no-store");
+    return sendJson(res, 200, cache.recommendations ?? { generatedAt: null, windowDays: 30, cards: [], coverage: null });
   }
 
   if (url === "/api/badges") {

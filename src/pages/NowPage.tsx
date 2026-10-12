@@ -12,11 +12,15 @@ import { tokensInWindow } from "../utils/fleetStats";
 import { freshTokens } from "../utils/units";
 import { formatCost, formatTokens } from "../utils/format";
 import { KpiRow } from "../components/Kpi";
+import { Recommendations } from "../components/Recommendations";
+import type { RecommendationsPayload } from "../utils/recommendations";
 
 interface Props {
   allSessions: Session[];
   provider: Provider;
   showClaude: boolean;
+  recommendations: RecommendationsPayload | null;
+  onOpenHealth: () => void;
   /** Sessions that count against the usage limits (the 5h window). */
   limitSessions: Session[];
   limits: RateLimits | null;
@@ -29,12 +33,29 @@ interface Props {
 const LATEST = 6;
 
 /** Follows the provider, but deliberately ignores time range and session filters. */
-export function NowPage({ allSessions, provider, showClaude, limitSessions, limits, badges, onSelectSession, onShowAllSessions, onOpenProgress }: Props) {
+export function NowPage({ allSessions, provider, showClaude, recommendations, onOpenHealth, limitSessions, limits, badges, onSelectSession, onShowAllSessions, onOpenProgress }: Props) {
   const live = allSessions.filter((s) => s.live);
   const rows = live.length > 0 ? live : allSessions.slice(0, LATEST);
 
   return (
     <div className="page">
+      <Recommendations
+        data={recommendations}
+        onSelectSession={onSelectSession}
+        limit={3}
+        variant="list"
+        onSeeAll={onOpenHealth}
+        hideWhenEmpty
+        wrap={(list) => (
+          <PageSection
+            title="To fix"
+            note={`From your last ${recommendations?.windowDays ?? 30} days of sessions`}
+            aside={<button className="link-btn" onClick={onOpenHealth}>All recommendations →</button>}
+          >
+            {list}
+          </PageSection>
+        )}
+      />
       <PageSection
         title="Right now"
         note={`${PROVIDER_LABELS[provider]} · not affected by the range or filters`}

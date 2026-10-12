@@ -28,6 +28,7 @@ import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, pa
 import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModelOverrides } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
+import { stripNoise } from "./known-frictions.mjs";
 
 // `pnpm parse` dump. Never under public/ or dist/: it holds real prompts and paths.
 // Claude Code moves ~/.claude when CLAUDE_CONFIG_DIR is set; so do we.
@@ -47,6 +48,29 @@ const PLUGIN_CACHE_DIR = join(DATA, "cache");
 const NON_PROMPT_RE = /^\s*(<(command-|local-command-|task-notification|system-reminder)|\[Request interrupted|Caveat:)/;
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+
+/** Calls that wait on the user: their duration is how long the session sat on a question or a plan. */
+const WAIT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
+const MAX_INCIDENTS = 500;
+
+/** The question asked, or the plan's title. */
+function askText(tool, input) {
+  if (tool === "AskUserQuestion") return String(input.questions?.[0]?.question ?? input.question ?? "").slice(0, 200) || null;
+  if (tool === "ExitPlanMode") return String(input.plan ?? "").split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").slice(0, 200) || null;
+  return null;
+}
+
+/** What went wrong with a call, if anything: a denial, a wait on the user, or a failure. */
+function incidentOf(j, tr, body, call, tsMs) {
+  const base = { t: tsMs, tool: call?.tool ?? null, ...(call?.command ? { command: call.command } : {}) };
+  if (typeof j.toolDenialKind === "string") return { ...base, kind: "denial", denial: j.toolDenialKind, text: body.slice(0, 300) };
+  if (call && WAIT_TOOLS.has(call.tool) && tsMs && call.tsMs && tsMs >= call.tsMs) {
+    return { t: call.tsMs, tool: call.tool, kind: "wait", ms: tsMs - call.tsMs, ...(call.ask ? { text: call.ask } : {}) };
+  }
+  if (!tr.is_error || !body) return null;
+  const { text, noise } = stripNoise(body);
+  return { ...base, kind: "error", text: text.slice(0, 300), ...(noise.length ? { noise } : {}) };
+}
 
 const costFor = costOf;
 /** Priced per turn when available, so sessions that switch models cost right. */
@@ -271,6 +295,10 @@ async function parseTranscriptFile(path, sidechain) {
   const resultById = new Map();
   // Agent / Task calls: the sub-agent id Claude Code writes in the call's result (`toolUseResult.agentId`).
   const agentIdByToolUse = new Map();
+  // Every call (toolSequence stops at 300) and what went wrong with it, for scripts/recommendations.mjs.
+  const callById = new Map();
+  const incidents = [];
+  let resultCount = 0;
   // Sub-agent transcripts: their own id and the instructions they were given (their first user message).
   let agentId = null;
   let subPrompt = null;
@@ -357,6 +385,7 @@ async function parseTranscriptFile(path, sidechain) {
         }
         const name = toolKey(c.name);
         const input = c.input ?? {};
+        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? input.command.slice(0, 300) : null, ask: askText(c.name, input) });
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
         turn.tools.push(name);
@@ -404,6 +433,9 @@ async function parseTranscriptFile(path, sidechain) {
                 .map((b) => b.text)
                 .join("\n");
             }
+            resultCount++;
+            const incident = incidentOf(j, tr, body, callById.get(tr.tool_use_id), tsMs);
+            if (incident && incidents.length < MAX_INCIDENTS) incidents.push(incident);
             if (!body) continue;
             quality?.onToolResult(tr.tool_use_id, body.length);
             resultById.set(tr.tool_use_id, {
@@ -478,6 +510,8 @@ async function parseTranscriptFile(path, sidechain) {
     runningTool,
     customTitle,
     version,
+    incidents,
+    toolResults: resultCount,
     quality: quality?.finish(turns) ?? null,
     ...(sidechain ? { agentId, subPrompt } : {}),
   };
@@ -745,6 +779,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     ...(ghostKind ? { ghost: true, ghostKind } : {}),
     ...(!t ? { transcriptMissing: true } : {}),
     quality: t?.quality ?? null,
+    // Absolute times, sub-agents included: read by scripts/recommendations.mjs, left out of the list payload.
+    incidents: [t, ...subs].flatMap((src) => src?.incidents ?? []).sort((a, b) => (a.t ?? 0) - (b.t ?? 0)),
+    incidentStats: { toolResults: [t, ...subs].reduce((n, src) => n + (src?.toolResults ?? 0), 0) },
     ...(t?.version ? { version: t.version } : {}),
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
     fileHistory,

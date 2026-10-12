@@ -111,6 +111,7 @@ Sessions are returned sorted by `startedAt` descending. Helpers shared by both p
 - **Sub-agent calls** are nested (`children`) under the main-thread call that started the sub-agent (`scripts/subagent-calls.mjs`): matched by `agentId`, else by the sub-agent's first message (the call's prompt), else by time (the last free call before it started). A sub-agent no call matches gets a row of its own (`orphan`, not a call itself). Every call is then listed once, and the list, the tool counts and the Tools tab count add up.
 - Active time sums gaps between events, capping each gap at 5 minutes (`IDLE_CAP_MS`); `wallMs` is wall-clock.
 - `runningTool` is the last `tool_use` without a result (shown only for live sessions).
+- **Incidents** (`incidents`, sub-agents included, absolute times): a failed call (`is_error`, its text with known noise stripped, e.g. zoxide's doctor message, and the noise ids), a denied action (`toolDenialKind` on the result line, with the reason Claude Code gave) and a wait on the user (`AskUserQuestion` / `ExitPlanMode`, call-to-result duration, the question or the plan's title). Capped at 500 per transcript, with `incidentStats.toolResults` beside them; kept out of the list payload. Read by §5's recommendations.
 - Caps: prompt texts (first 100, truncated), tool sequence (first 300 entries per transcript, previews truncated), result previews.
 - File paths from tool inputs are hashed (`sha256(path)` first 16 hex chars) to label `file-history` entries; unmatched hashes are shown without a path.
 
@@ -213,6 +214,17 @@ The **Health** tab is a checklist of rules over the sessions in the selected ran
 
 Rules: context quality, context headroom, compactions, prompt cache, startup cost (median first-turn context: system prompt, CLAUDE.md, memory, skills and MCP tools; this rule and the cache rule only count Claude Code sessions, the others need data Codex sessions don't have), outcomes, friction, forgotten sessions (process running over 24h, from the pid file's `startedAt`) and housekeeping (ghosts). Adding one means appending a function to `RULES`.
 
+### Recommendations (`scripts/recommendations.mjs`, `scripts/known-frictions.mjs`)
+
+Computed server-side after every parse from the sessions' incidents (Claude Code only; Codex rollouts don't expose them yet), over the last 30 days. Cards are written for the reader, not for a shell expert: the title gives the effect, counted ("41 commands failed because of a zsh setting"), `what` says what happens in one sentence, `action` what to do (a line to copy and a prompt to paste into Claude Code, which explains and applies the change), and `details` the mechanism. Marey only suggests: nothing is applied.
+
+- **Known causes** (`CAUSES`): a failed call whose text matches one (unmatched zsh globs, the rtk hook, sandbox writes, a shared Playwright profile, Playwright file roots, the wrong directory, worktree isolation, an MCP server to reconnect) counts toward its card, shown from 3 sessions. **Noise** (`NOISE`) gets its own card. Harness retries (`File has not been read yet`, …) and user rejections are ignored.
+- **Recurring errors**: other failures grouped by `errorKey` (paths, ids and numbers stripped first, bare exit codes dropped); the 3 widest groups seen in 3+ sessions become cards, naming the command only when it accounts for 80% of the group.
+- **Denials**: grouped by command head (`commandHead`: no `cd`, env assignments, flags or arguments; `$(…)` unwrapped), with Claude Code's reason. Commands matching `PROTECTIVE` (merge, push, force, destructive, credentials) are marked "keep"; only repeated, non-protective commands get a narrow `Bash(<head> *)` allow rule (allow rules apply before the auto mode classifier).
+- **Waits**: 3+ waits over 10 minutes in the last 7 days suggest `/bg` and agent view.
+
+Each card also carries its count, sessions, trend (last 7 days vs the 7 before), latest error and up to 8 sessions. Cards with something to paste or try come first, then by spread. `coverage` says what was read (sessions, tool calls, results, failures, denials, waits) and warns when tool calls were found but no result could be read, so an empty list never hides a format change.
+
 ---
 
 ## 6. API (`scripts/api.mjs`)
@@ -231,6 +243,7 @@ Shared by the production server and the Vite dev server, so both expose the same
 | GET | `/api/sessions/:id` | Full session from the cache. | id must be a 36-char UUID; 404 if unknown. |
 | POST | `/api/sessions/:id/focus` | Bring the terminal running a live Claude Code session to the front (see below). Returns `{ app, exact }`. | UUID check; POST only; 409 unless the session is live with a pid; 501 off macOS. |
 | GET | `/api/file-history/:id/:hash@v:n` | Raw snapshot from `file-history/`. | id and file name regex-validated (no path traversal). |
+| GET | `/api/recommendations` | Recommendation cards and `coverage` from the last parse (§5). | `no-store`. |
 | GET | `/api/badges` | Badge families with per-tier progress and unlock dates, level and XP, current streak (§5). | `no-store`. |
 | GET | `/api/limits` | `readLimits()` or `null`. | `no-store`. |
 | GET | `/api/live-context` | `readLiveContext()`: context / prompt-cache snapshots per session, newest first. | `no-store`. |
@@ -294,6 +307,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 | `LimitsPill` | The 5h and 7-day usage windows (fill, elapsed-time tick, reset countdown); rendered in the top bar and in the session view so they are always on screen. |
 | `units` (`utils/units.ts`, `UnitSetting`) | Display unit for usage: **tokens** (fresh = input + output + cache writes; cached reads are shown apart) or **API value** ($ at API prices, read as a relative weight, since a subscription is limited by the 5h / 7d windows rather than dollars). Persisted in `localStorage` (`marey:unit`), set from the profile menu. Rankings by weight (podium "Heaviest", project league) use API value. The podium "Longest" ranks by `longestRunMs` (longest main-thread stretch with no pause over 15 min), not `durationMs`, which adds up to 5 min per gap and so favors sessions left open for days. |
 | `ParseErrors` / `ProfileMenu` | Top-bar badge listing unreadable session-meta files with a Trash action (only shown when there are some). Profile chip (data status dot, level, XP bar, streak, dimmed when at risk; "+N XP" when XP comes in) opening a menu: level progress and today's XP (opens Progress), Health link, usage unit, data status and insights report, `LimitsSection`, keyboard shortcuts, bug report link. |
+| `Recommendations` | The cards from `/api/recommendations` (`utils/recommendations.ts`): kind, title, sessions and when it was last seen, what happens, denied commands, the action ("Copy a prompt for Claude", "Copy the line", docs), and folded details (mechanism, latest error, the sessions behind it). "Done" / "Not relevant" hide a card in `localStorage` (`marey:recs-dismissed`) until its count grows. Health shows them all; Now shows three as one-line rows, or nothing when there are none. |
 | `StatsStrip` (`StatsRow`) | Headline tiles of the scope: sessions, active time, API value, fresh tokens. |
 | `SessionList` | The sessions table: status glyph (live, ghost, cleared, or an outcome dot filled as far as the goal was met), goal, project, flags (open-terminal chip on live Claude Code rows on macOS, Codex tag, friction, plugin capture), usage, active time, start; sortable headers; day headers when sorted by date; virtualized. Also renders the short lists of the Now page, and `BulkGhostBar`. |
 | `SessionCompare` | Side-by-side metrics for selected sessions. |

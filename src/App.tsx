@@ -17,6 +17,7 @@ import { BadgesPage } from "./pages/BadgesPage";
 import { loadSessions, loadSessionDetail } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
+import { useRecommendations } from "./utils/recommendations";
 import type { Range } from "./utils/range";
 import { filterByRange, scopeToRange } from "./utils/range";
 import { registerProjects } from "./utils/fleetStats";
@@ -152,6 +153,9 @@ function App() {
   // Refetched after each parse; announces unlocks and level-ups wherever the user is.
   const claudeBadges = useBadges(allSessions);
   const badges = showClaude ? claudeBadges : null;
+  // Claude Code only for now: Codex rollouts expose no incidents yet.
+  const allRecommendations = useRecommendations(generatedAt);
+  const recommendations = showClaude ? allRecommendations : null;
   const openProgress = () => {
     setSelectedIdInternal(null);
     setPage("badges");
@@ -405,6 +409,8 @@ function App() {
             allSessions={providerSessions}
             provider={provider}
             showClaude={showClaude}
+            recommendations={recommendations}
+            onOpenHealth={() => setPage("health")}
             limitSessions={limitSessions}
             limits={limits}
             badges={badges}
@@ -469,7 +475,7 @@ function App() {
           <UsagePage sessions={scopedFiltered} allSessions={providerSessions} range={range} onSelectSession={setSelectedId} />
         )}
         {page === "health" && (
-          <HealthPage sessions={scopedFiltered} allSessions={providerSessions} onSelectSession={setSelectedId} />
+          <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} onSelectSession={setSelectedId} />
         )}
         {page === "badges" && (
           <BadgesPage

@@ -8,6 +8,7 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 
+- Recommendations backed by your own sessions, at the top of Now and Health: recurring setup errors (unmatched zsh globs, a shared Playwright browser, sandbox writes…), denied actions with narrow allow rules for the safe ones, and sessions left waiting on you, each in plain words with the sessions behind it, a line to copy and a prompt to paste into Claude Code. Marey never applies a fix itself.
 - A global provider switcher lists detected Claude Code and Codex sessions, remembers the selection, and scopes every page. Claude limits and badges are labelled explicitly and hidden in Codex views, which show today's Codex activity instead.
 
 ### Fixed

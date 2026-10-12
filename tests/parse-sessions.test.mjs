@@ -289,3 +289,21 @@ test("prices every seeded Codex model", () => {
     assert.ok(s.costUsd > 0, `session ${s.id}`);
   }
 });
+
+test("keeps incidents (failures, denials, waits on the user) out of the list payload", async () => {
+  const all = claude.flatMap((s) => s.incidents);
+  assert.ok(all.some((i) => i.kind === "denial" && i.denial === "automode-blocked" && /gh pr merge/.test(i.command)));
+  assert.ok(all.some((i) => i.kind === "error" && /no matches found/.test(i.text)));
+  const wait = all.find((i) => i.kind === "wait");
+  assert.ok(wait.ms >= 18 * 60_000);
+  assert.match(wait.text, /retry budget/);
+  for (const s of claude) assert.ok(s.incidentStats.toolResults >= s.incidents.filter((i) => i.kind !== "wait").length);
+  const { summarizeSession } = await import("../scripts/parse-sessions.mjs");
+  assert.equal(summarizeSession(claude[0]).incidents, undefined);
+});
+
+test("recommends the seeded frictions", async () => {
+  const { buildRecommendations } = await import("../scripts/recommendations.mjs");
+  const ids = buildRecommendations(parsed.sessions).cards.map((c) => c.id);
+  for (const id of ["cause:zsh-nomatch", "cause:playwright-profile", "denials", "waits"]) assert.ok(ids.includes(id), id);
+});

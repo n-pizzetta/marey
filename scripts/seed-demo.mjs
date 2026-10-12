@@ -156,6 +156,33 @@ function transcript({ id, cwd, start, prompts, model, sidechain = false, agentId
 }
 
 /**
+ * Recurring frictions for the recommendations, appended after the transcript's last line. Picked
+ * from the session's index, not rand(), so the rest of the demo stays the same: an unmatched zsh
+ * glob, two kinds of auto mode denial, a busy Playwright browser, and a long wait on a question.
+ */
+function frictionLines({ id, cwd, model, at, n, recent }) {
+  const lines = [];
+  let t = at;
+  const base = { sessionId: id, cwd };
+  const call = (name, input, result, { error = false, denial = null, after = 4_000 } = {}) => {
+    const toolId = `toolu_${n}_${lines.length}`;
+    t += 5_000;
+    lines.push({ ...base, type: "assistant", timestamp: new Date(t).toISOString(), message: { id: `msg_friction_${n}_${lines.length}`, role: "assistant", model, usage: { input_tokens: 4, output_tokens: 120, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 300 }, content: [{ type: "tool_use", id: toolId, name, input }] } });
+    t += after;
+    lines.push({ ...base, type: "user", timestamp: new Date(t).toISOString(), ...(denial ? { toolDenialKind: denial } : {}), message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: result, ...(error || denial ? { is_error: true } : {}) }] } });
+  };
+  if (n % 3 === 0) call("Bash", { command: "find . -name *.pyc -delete" }, "Exit code 1\n(eval):1: no matches found: *.pyc", { error: true });
+  if (n % 4 === 1) call("Bash", { command: "gh pr merge 42 --squash" }, "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Merge Without Review]. If you have other tasks that don't depend on this action, continue working on those.", { denial: "automode-blocked" });
+  if (n % 4 === 2) call("Bash", { command: "pnpm dlx depcheck" }, "Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier. If you have other tasks that don't depend on this action, continue working on those.", { denial: "automode-blocked" });
+  if (n % 5 === 3) call("mcp__playwright__browser_navigate", { url: "http://localhost:5173" }, "### Error\nError: Browser is already in use for /Users/demo/Library/Caches/ms-playwright-mcp/mcp-chrome-1a2b3c, use --isolated to run multiple instances of the same browser", { error: true });
+  if (recent && n % 2 === 0) {
+    call("AskUserQuestion", { questions: [{ question: "Should the retry budget be per user or per endpoint?", header: "Retries", multiSelect: false, options: [{ label: "Per endpoint" }, { label: "Per user" }] }] },
+      'User has answered your questions: "Should the retry budget be per user or per endpoint?"="Per endpoint".', { after: (18 + (n % 4) * 9) * MIN });
+  }
+  return lines;
+}
+
+/**
  * file-history/<sessionId>/<sha256(path)[:16]>@v<n>, like Claude Code: a file's content before each
  * edit and after the last, so the Files tab has versions and diffs. Deterministic: no rand().
  */
@@ -201,7 +228,8 @@ for (let day = 6; day >= 0; day--) {
     const goal = pick(PROJECTS[project]);
     const prompts = [goal, ...Array.from({ length: int(1, 5) }, () => pick(FOLLOW_UPS))];
     const model = pick(MODELS);
-    const { lines, subs } = transcript({ id, cwd, start, prompts, model });
+    const { lines, subs, end } = transcript({ id, cwd, start, prompts, model });
+    lines.push(...frictionLines({ id, cwd, model, at: end, n: sessionCount, recent: day >= 1 && day <= 3 }));
     if (rand() < 0.3) lines.push({ type: "custom-title", customTitle: goal.toLowerCase().split(" ").slice(0, 4).join("-"), sessionId: id });
     writeJsonl(join(CLAUDE, "projects", slug, `${id}.jsonl`), lines);
 

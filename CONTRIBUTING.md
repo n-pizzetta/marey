@@ -84,6 +84,7 @@ Maintainers cut releases from `main`; contributors don't need to bump anything. 
 |---|---|
 | Reading Claude Code's data | `scripts/parse-sessions.mjs` |
 | Model names and prices | `scripts/models.mjs` |
+| Recommendations and their known causes | `scripts/recommendations.mjs`, `scripts/known-frictions.mjs` (add a cause there, with its fix) |
 | Local API (prod and dev) | `scripts/api.mjs`, mounted by `scripts/serve.mjs` and `vite.config.ts` |
 | Plugins | `.claude-plugin/`, `commands/`, `hooks/capture.mjs`, `scripts/statusline.mjs`; `.codex-plugin/`, `codex-skills/`, `scripts/launch.mjs` for Codex |
 | Dashboard | `src/` |
