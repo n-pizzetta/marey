@@ -3,7 +3,6 @@ import type { Level, Streak } from "../utils/gamify";
 import { PRODUCT_NAME } from "../utils/brand";
 import { keepFocus } from "../utils/keepFocus";
 import { NAV_PAGES, type Page } from "../utils/pages";
-import { LimitsPill } from "./LimitsGauge";
 import { BrandMark } from "./BrandMark";
 import { ParseErrors } from "./ParseErrors";
 import { ProfileMenu } from "./ProfileMenu";
@@ -11,6 +10,7 @@ import { UpdateNotice } from "./UpdateNotice";
 import type { Agent } from "../types";
 import type { Provider } from "../utils/providers";
 import { ProviderSwitcher } from "./ProviderSwitcher";
+import { WindowMenu } from "./WindowMenu";
 
 export interface ReportStatus {
   exists: boolean;
@@ -24,6 +24,10 @@ interface Props {
   provider: Provider;
   onProviderChange: (provider: Provider) => void;
   showClaude: boolean;
+  /** Running sessions waiting on the user, shown on the Now tab. */
+  needsYou: number;
+  /** The panel the limits pill opens (the current 5h window); `close` hides it. */
+  windowPanel: (close: () => void) => ReactNode;
   /** Sessions in the scope, shown on the Sessions tab. */
   sessionCount: number;
   /** Failing or warning health checks in the scope, shown on the Health tab. */
@@ -75,6 +79,8 @@ export function AppHeader({
   provider,
   onProviderChange,
   showClaude,
+  needsYou,
+  windowPanel,
   sessionCount,
   healthIssues,
   unseenUnlocks,
@@ -108,6 +114,9 @@ export function AppHeader({
               {NAV_ICONS[p.id]}
             </svg>
             {p.label}
+            {p.id === "now" && needsYou > 0 && (
+              <span className="app-nav-count warn mono tabular" title={`${needsYou} session${needsYou > 1 ? "s" : ""} waiting for you`}>{needsYou}</span>
+            )}
             {p.id === "sessions" && <span className="app-nav-count mono tabular">{sessionCount}</span>}
             {p.id === "health" && healthIssues > 0 && (
               <span className="app-nav-count warn mono tabular" title={`${healthIssues} check${healthIssues > 1 ? "s" : ""} to look at`}>
@@ -125,7 +134,7 @@ export function AppHeader({
 
       <div className="app-header-right">
         <UpdateNotice />
-        {showClaude && <LimitsPill />}
+        {showClaude && <WindowMenu>{windowPanel}</WindowMenu>}
         {parseErrors && parseErrors.length > 0 && <ParseErrors errors={parseErrors} />}
         <ProfileMenu
           level={level}

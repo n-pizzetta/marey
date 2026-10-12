@@ -72,6 +72,39 @@ function incidentOf(j, tr, body, call, tsMs) {
   return { ...base, kind: "error", text: text.slice(0, 300), ...(noise.length ? { noise } : {}) };
 }
 
+/** "Bash: pnpm test", "Edit: src/App.tsx": the call a session is running or asking to run. */
+function describeCall(call) {
+  if (!call) return null;
+  // "cd <project> && pnpm test" → "pnpm test": the folder is already on the row.
+  if (call.command) return `${call.tool}: ${call.command.split("\n")[0].replace(/^cd\s+\S+\s*&&\s*/, "").slice(0, 120)}`;
+  if (call.file) return `${call.tool}: ${call.file.split("/").pop()}`;
+  return call.tool;
+}
+
+/** The start of the last thing the main thread said. */
+function lastReply(turns) {
+  for (let i = turns.length - 1; i >= 0; i--) if (turns[i].outPreview && !turns[i].sidechain) return turns[i].outPreview.slice(0, 200);
+  return null;
+}
+
+/**
+ * What a running session needs: an open question or plan (needs you), an open call while idle
+ * (a permission prompt, by elimination), idle with nothing open (your turn), or busy (working).
+ * Without a status (older Claude Code, Codex), activity in the last 30 s counts as working.
+ */
+export function liveStateOf({ live, pending, lastCall = null, lastText, lastTs, now }) {
+  const iso = (ms) => new Date(ms ?? now).toISOString();
+  if (pending && WAIT_TOOLS.has(pending.tool)) {
+    return { state: "needs-you", reason: pending.tool === "ExitPlanMode" ? "plan" : "question", text: pending.ask ?? null, since: iso(pending.tsMs) };
+  }
+  const status = live?.status ?? null;
+  const busy = status ? status === "busy" : !!lastTs && now - lastTs < 30_000;
+  // Between two calls the model is writing: the last call says what it is on.
+  if (busy) return { state: "working", text: describeCall(pending ?? lastCall), since: iso(live?.statusAt ?? lastTs) };
+  if (pending && status === "idle") return { state: "needs-you", reason: "permission", text: describeCall(pending), since: iso(pending.tsMs) };
+  return { state: "your-turn", text: lastText, since: iso(live?.statusAt ?? lastTs) };
+}
+
 const costFor = costOf;
 /** Priced per turn when available, so sessions that switch models cost right. */
 const sessionCost = (model, tokens, turns) =>
@@ -298,6 +331,9 @@ async function parseTranscriptFile(path, sidechain) {
   // Every call (toolSequence stops at 300) and what went wrong with it, for scripts/recommendations.mjs.
   const callById = new Map();
   const incidents = [];
+  // The last call and whether it was answered: an open question, plan or permission means the session waits on the user.
+  let lastCallId = null;
+  const answered = new Set();
   let resultCount = 0;
   // Sub-agent transcripts: their own id and the instructions they were given (their first user message).
   let agentId = null;
@@ -385,7 +421,8 @@ async function parseTranscriptFile(path, sidechain) {
         }
         const name = toolKey(c.name);
         const input = c.input ?? {};
-        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? input.command.slice(0, 300) : null, ask: askText(c.name, input) });
+        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? input.command.slice(0, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: askText(c.name, input) });
+        if (c.id) lastCallId = c.id;
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
         turn.tools.push(name);
@@ -434,6 +471,7 @@ async function parseTranscriptFile(path, sidechain) {
                 .join("\n");
             }
             resultCount++;
+            answered.add(tr.tool_use_id);
             const incident = incidentOf(j, tr, body, callById.get(tr.tool_use_id), tsMs);
             if (incident && incidents.length < MAX_INCIDENTS) incidents.push(incident);
             if (!body) continue;
@@ -512,6 +550,8 @@ async function parseTranscriptFile(path, sidechain) {
     version,
     incidents,
     toolResults: resultCount,
+    pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
+    lastCall: lastCallId ? callById.get(lastCallId) : null,
     quality: quality?.finish(turns) ?? null,
     ...(sidechain ? { agentId, subPrompt } : {}),
   };
@@ -684,7 +724,12 @@ async function collectLive(liveFiles, index) {
     }
     const newest = chain[chain.length - 1];
     for (const id of chain) {
-      byId.set(id, { pid: info.pid, name: info.name, cwd: info.cwd, startedAt: info.startedAt, isLive: id === newest });
+      byId.set(id, {
+        pid: info.pid, name: info.name, cwd: info.cwd, startedAt: info.startedAt, isLive: id === newest,
+        // "busy" / "idle", written by recent Claude Code versions.
+        status: typeof info.status === "string" ? info.status : null,
+        statusAt: typeof info.statusUpdatedAt === "number" ? info.statusUpdatedAt : null,
+      });
     }
   }
   return byId;
@@ -798,6 +843,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       })),
     ),
     turns,
+    ...(isLive ? { liveState: liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: lastReply(mainTurns), lastTs, now }), ...(live?.name ? { liveName: live.name } : {}) } : {}),
     runningTool: isLive && t?.runningTool
       ? { tool: t.runningTool.tool, preview: t.runningTool.preview, t: Math.max(0, (t.runningTool.tsMs ?? startedAtMs) - startedAtMs) }
       : null,
@@ -1107,6 +1153,8 @@ export function summarizeSession(s) {
     clearedInto: s.clearedInto,
     lastEventAt: s.lastEventAt,
     runningTool: s.runningTool ?? null,
+    liveState: s.liveState ?? null,
+    liveName: s.liveName,
     version: s.version,
     contextWindow: s.contextWindow,
     processStartedAt: s.processStartedAt,

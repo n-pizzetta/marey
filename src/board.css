@@ -1,0 +1,90 @@
+/* Sessions board (components/SessionBoard.tsx): running sessions grouped by what they need */
+.board { display: flex; flex-direction: column; gap: 12px; }
+
+.board-group {
+  --board-tone: var(--c-text-dim);
+  padding: 12px 8px 6px;
+  background: var(--c-bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.board-needs-you { --board-tone: var(--c-amber); box-shadow: var(--shadow-card), inset 3px 0 0 var(--c-amber); }
+.board-your-turn { --board-tone: var(--c-cyan); }
+.board-working { --board-tone: var(--c-green); }
+
+.board-group-head { display: flex; align-items: baseline; gap: 8px; padding: 0 12px 6px; }
+.board-group-head h3 { margin: 0; font-size: var(--fs-base); font-weight: 650; color: var(--c-text); }
+.board-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--board-tone); align-self: center; }
+.board-working .board-dot { animation: board-pulse 1.6s ease-in-out infinite; }
+@keyframes board-pulse { 50% { opacity: 0.35; } }
+.board-count { font-size: var(--fs-md); color: var(--board-tone); font-weight: 600; }
+.board-hint { font-size: var(--fs-md); color: var(--c-text-faint); }
+
+.board-group ul { list-style: none; margin: 0; padding: 0; }
+.board-group li { border-top: 1px solid var(--c-hairline); }
+.board-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(90px, 150px) 1fr auto auto;
+  align-items: baseline;
+  gap: 14px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.board-row:hover, .board-row:focus-visible { background: var(--c-bg-hover); outline: none; }
+.board-name { font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-project { font-size: var(--fs-sm); color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-line { font-size: var(--fs-base); color: var(--c-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.board-needs-you .board-line { color: var(--c-text); }
+.board-since { font-size: var(--fs-md); color: var(--board-tone); white-space: nowrap; }
+.board-open {
+  font-size: var(--fs-sm);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--c-hairline-strong);
+  color: var(--c-text-dim);
+  white-space: nowrap;
+}
+.board-open:hover { color: var(--c-cyan); border-color: color-mix(in srgb, var(--c-cyan) 55%, transparent); }
+
+@media (max-width: 720px) {
+  .board-row { grid-template-columns: 1fr auto; gap: 2px 10px; }
+  .board-name { grid-column: 1; }
+  .board-since { grid-column: 2; grid-row: 1; }
+  .board-project { grid-column: 1 / -1; }
+  .board-line { grid-column: 1 / -1; white-space: normal; }
+  .board-open { grid-column: 1 / -1; justify-self: start; margin-top: 4px; }
+}
+
+/* 5h window menu (components/WindowMenu.tsx): a panel out of the limits pill, like a menu bar item */
+.window-menu { position: relative; align-self: center; }
+.window-menu.open .limits-pill.clickable { background: var(--c-bg-hover); }
+.window-pop {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: -10px;
+  z-index: 70;
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--c-bg-panel);
+  border: 1px solid var(--c-hairline-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: window-pop-in 140ms ease-out;
+}
+@keyframes window-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+/* the panel is the card: the 5h block inside drops its own (.page gives it the page's panel styles) */
+.window-pop.page { gap: 12px; }
+.window-pop.page .five-hour-session { padding: 0; background: none; box-shadow: none; border-radius: 0; }
+.window-pop.page .consumers-lists { grid-template-columns: minmax(0, 1fr); }
+.window-pop-foot { display: flex; padding-top: 10px; border-top: 1px solid var(--c-hairline); }
+.window-pop-foot .live-burn { margin-left: 0; }
+@media (max-width: 720px) {
+  .window-pop { position: fixed; top: 112px; left: 12px; right: 12px; width: auto; }
+}
