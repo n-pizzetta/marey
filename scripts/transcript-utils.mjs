@@ -8,11 +8,11 @@ export const toolKey = (name) => (name.startsWith("mcp__") ? `mcp:${name.split("
 
 /** Gaps longer than this between two transcript events count as idle, not active time. */
 export const IDLE_CAP_MS = 5 * 60_000;
-/** A pause up to this long doesn't end a continuous work stretch (same as RUN_GAP_MS in badges.mjs). */
+/** A pause up to this long doesn't end a continuous work stretch. */
 export const RUN_GAP_MS = 15 * 60_000;
 
 /**
- * Shell command kinds counted for badges. Matched on the head of each segment
+ * Shell command kinds (PRs, tests, lint or build, infra). Matched on the head of each segment
  * (split on && ; | and newlines), so `echo "npm test"` is not a test run.
  */
 const RUNNER = String.raw`((npx|bunx|pnpm(\s+(exec|dlx))?|yarn|uv\s+run|poetry\s+run)\s+)?`;

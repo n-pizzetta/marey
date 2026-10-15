@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Parses Claude Code session data into the dashboard's Session objects.
+ * Parses Claude Code session data into the dashboard's Session objects, plus
+ * Codex (codex.mjs) and Copilot CLI (copilot.mjs) sessions in the same shape.
  * Transcripts (~/.claude/projects/**) are the source of every number; live
  * state comes from ~/.claude/sessions/{pid}.json; /insights session-meta and
  * facets only enrich goal, summary, outcome and frictions. Read-only toward
@@ -25,6 +26,8 @@ import {
   toolKey,
 } from "./transcript-utils.mjs";
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
+import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
+import { freshest } from "./provider-limits.mjs";
 import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModelOverrides } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
@@ -303,7 +306,10 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude" } 
   try { st = await fspStat(path); } catch { return null; }
   const cached = transcriptCache.get(path);
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.data;
-  const data = agent === "codex" ? await parseCodexRollout(path) : await parseTranscriptFile(path, sidechain);
+  const data =
+    agent === "codex" ? await parseCodexRollout(path)
+    : agent === "copilot" ? await parseCopilotEvents(path)
+    : await parseTranscriptFile(path, sidechain);
   transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, data });
   return data;
 }
@@ -606,6 +612,7 @@ function relativizeTurns(turns, prompts, startedAt) {
       inPreview: tu.inPreview ?? "",
       outPreview: tu.outPreview ?? "",
       ...(promptIdx !== undefined ? { promptIdx } : {}),
+      ...(tu.credits ? { credits: tu.credits } : {}),
     };
   });
 }
@@ -756,7 +763,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   const t = entry ? await readTranscriptFile(entry.path, { agent }) : null;
   if (!t && !meta && !live) return null;
   if (t && !t.firstTs && !meta && !live) return null;
-  const subs = agent === "codex" ? codexChildren.map(asSidechain) : entry ? await readSubagents(entry, id) : [];
+  const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id) : [];
 
   const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
   const startedAtMs = t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
@@ -795,8 +802,8 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   return {
     id,
     agent,
-    project: projectName(t?.cwd ?? meta?.project_path ?? live?.cwd),
-    cwd: t?.cwd ?? meta?.project_path ?? live?.cwd ?? "",
+    project: projectName(t?.cwd ?? meta?.project_path ?? entry?.cwd ?? live?.cwd),
+    cwd: t?.cwd ?? meta?.project_path ?? entry?.cwd ?? live?.cwd ?? "",
     startedAt: new Date(startedAtMs).toISOString(),
     // Active time: gaps over IDLE_CAP_MS between transcript events are idle.
     durationMs: t ? Math.max(1, t.activeMs) : Math.max(1, (meta?.duration_minutes ?? 0) * 60_000),
@@ -815,7 +822,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     baselineCostUsd: baselineCostFor(model, tokens),
     frictions: isLive ? [] : mapFrictions(facet),
     timeline: t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
-    subAgents: subs.length || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
+    subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
     filesChanged: fileHistory.length || t?.filesChanged || meta?.files_modified || 0,
     commits: t ? t.commits : meta?.git_commits ?? 0,
     ...(t ? { shell: t.shell } : {}),
@@ -829,6 +836,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     incidentStats: { toolResults: [t, ...subs].reduce((n, src) => n + (src?.toolResults ?? 0), 0) },
     ...(t?.version ? { version: t.version } : {}),
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
+    ...(agent === "copilot" ? { aiCredits: t?.aiCredits ?? null } : {}),
     fileHistory,
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
@@ -843,7 +851,12 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       })),
     ),
     turns,
-    ...(isLive ? { liveState: liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: lastReply(mainTurns), lastTs, now }), ...(live?.name ? { liveName: live.name } : {}) } : {}),
+    ...(isLive
+      ? {
+          liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: lastReply(mainTurns), lastTs, now }),
+          ...(live?.name ? { liveName: live.name } : {}),
+        }
+      : {}),
     runningTool: isLive && t?.runningTool
       ? { tool: t.runningTool.tool, preview: t.runningTool.preview, t: Math.max(0, (t.runningTool.tsMs ?? startedAtMs) - startedAtMs) }
       : null,
@@ -1043,16 +1056,20 @@ function markUnpriced(s) {
 }
 
 /**
- * Parses every Claude Code session reachable from ~/.claude/, and every Codex
- * session under ~/.codex/ (scripts/codex.mjs). Returns
- * { sessions (newest first), errors (unreadable session-meta files),
- * modelOverrides }. Used by scripts/api.mjs and by `pnpm parse`.
+ * Parses every Claude Code session reachable from ~/.claude/, every Codex
+ * session under ~/.codex/ (scripts/codex.mjs) and every Copilot CLI session
+ * under ~/.copilot/ (scripts/copilot.mjs). Returns { sessions (newest first),
+ * errors (unreadable session-meta files), modelOverrides, readings (the
+ * freshest Codex limits and Copilot quota the sessions logged, for
+ * provider-limits.mjs) }. Used by scripts/api.mjs and by `pnpm parse`.
  */
 export async function parseAllSessions() {
   const modelOverrides = await loadModelOverrides();
   const codexIndex = await indexCodexRollouts();
-  if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0) {
-    return { sessions: [], errors: [], modelOverrides };
+  const copilotIndex = await indexCopilotSessions();
+  const readings = { codex: null, copilot: null };
+  if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0 && copilotIndex.size === 0) {
+    return { sessions: [], errors: [], modelOverrides, readings };
   }
 
   const { alive: liveFiles, deadIds } = await classifyLiveFiles();
@@ -1107,13 +1124,32 @@ export async function parseAllSessions() {
     const s = await buildSession(id, { entry, live, dead: false, history, now, codexChildren: codexChildren.get(id) });
     if (s) all.push(s);
   }
+  readings.codex = freshest(codexParsed.values(), "rateLimits");
+
+  // Copilot CLI: a session is live while the copilot process named by its in-use lock runs.
+  if (copilotIndex.size > 0) {
+    const pids = copilotPids();
+    const open = await readOpenSessions();
+    const copilotParsed = [];
+    for (const [id, entry] of copilotIndex) {
+      if (built.has(id)) continue;
+      const t = await readTranscriptFile(entry.path, { agent: "copilot" });
+      if (!t) continue;
+      copilotParsed.push(t);
+      const isLive = entry.pids.some((pid) => pids.has(pid));
+      const live = isLive ? { isLive: true, cwd: entry.cwd ?? t.cwd, liveState: copilotLiveState(t, open.get(id), now) } : undefined;
+      const s = await buildSession(id, { entry, live, dead: false, history, now });
+      if (s) all.push(s);
+    }
+    readings.copilot = freshest(copilotParsed, "quota");
+  }
   all.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
   linkClearedChains(all);
   reassignLiveToChainTail(all);
   for (const s of all) markUnpriced(s);
 
-  return { sessions: all, errors: errorList, modelOverrides };
+  return { sessions: all, errors: errorList, modelOverrides, readings };
 }
 
 /**
@@ -1157,6 +1193,7 @@ export function summarizeSession(s) {
     liveName: s.liveName,
     version: s.version,
     contextWindow: s.contextWindow,
+    aiCredits: s.aiCredits,
     processStartedAt: s.processStartedAt,
     quality: s.quality
       ? { score: s.quality.score, grade: s.quality.grade, fillPct: s.quality.fillPct, band: s.quality.band, wasteTokens: s.quality.wasteTokens, compactions: s.quality.compactions, signals: [] }
@@ -1166,7 +1203,7 @@ export function summarizeSession(s) {
     // (5h-session detection, token-burn buckets, sparklines). Heavy text
     // fields (inPreview/outPreview, prompts.text) stay in the detail payload.
     turns: Array.isArray(s.turns)
-      ? s.turns.map((t) => ({ t: t.t, model: t.model, tokens: t.tokens, promptIdx: t.promptIdx, tools: t.tools }))
+      ? s.turns.map((t) => ({ t: t.t, model: t.model, tokens: t.tokens, promptIdx: t.promptIdx, tools: t.tools, ...(t.credits ? { credits: t.credits } : {}) }))
       : undefined,
     prompts: Array.isArray(s.prompts)
       ? s.prompts.map((p) => ({ t: p.t, preview: p.preview }))

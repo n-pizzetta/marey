@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Generates a fake Claude config dir (what ~/.claude holds) and a fake Codex
- * home (what ~/.codex holds) with realistic, fully synthetic data, for
- * screenshots and for developing without exposing real sessions.
+ * Generates a fake Claude config dir (what ~/.claude holds), a fake Codex home
+ * (~/.codex) and a fake Copilot CLI home (~/.copilot) with realistic, fully
+ * synthetic data, for screenshots and for developing without exposing real
+ * sessions.
  *
- *   pnpm seed:demo                                    # writes .demo-claude/ and .demo-codex/
- *   CLAUDE_CONFIG_DIR="$PWD/.demo-claude" CODEX_HOME="$PWD/.demo-codex" pnpm dev    # or: pnpm serve
+ *   pnpm seed:demo        # writes .demo-claude/, .demo-codex/ and .demo-copilot/
+ *   CLAUDE_CONFIG_DIR="$PWD/.demo-claude" CODEX_HOME="$PWD/.demo-codex" COPILOT_HOME="$PWD/.demo-copilot" pnpm dev    # or: pnpm serve
  *
  * Deterministic (seeded) except for timestamps, which are relative to now so
  * the "today", 7d and 5h views are populated.
@@ -16,6 +17,7 @@ import { createHash } from "node:crypto";
 
 const CLAUDE = resolve(process.argv[2] ?? ".demo-claude");
 const CODEX = resolve(process.argv[3] ?? join(dirname(CLAUDE), ".demo-codex"));
+const COPILOT = resolve(process.argv[4] ?? join(dirname(CLAUDE), ".demo-copilot"));
 const NOW = Date.now();
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -271,9 +273,6 @@ writeFileSync(join(CLAUDE, "marey", "limits.json"), JSON.stringify({
   },
 }));
 
-// Badges count from the first launch; backdate it so the demo history counts.
-writeFileSync(join(CLAUDE, "marey", "badges.json"), JSON.stringify({ version: 1, startedAt: new Date(NOW - 365 * 24 * HOUR).toISOString(), unlocked: {} }));
-
 /**
  * One Codex rollout. `legacy` mimics older CLIs (user_message events, direct
  * function calls, token_count only); otherwise newer ones (UserMessage items,
@@ -296,9 +295,14 @@ function codexRollout({ id, cwd, start, prompts, model, legacy, extras = false, 
     for (const k of Object.keys(total)) total[k] += usage[k];
     if (!legacy) push("token_usage_record", { session_id: id, usage });
     const info = { total_token_usage: { ...total }, last_token_usage: usage, model_context_window: 258_400 };
-    push("event_msg", { type: "token_count", info });
+    // The account's limits ride along; older CLIs gave the time left instead of the reset time.
+    const used = Math.min(100, Math.round(((t - (NOW - 7 * 24 * HOUR)) / (7 * 24 * HOUR)) * 40));
+    const rate_limits = legacy
+      ? { primary: { used_percent: used / 2, window_minutes: 300, resets_in_seconds: 3 * 3600 }, secondary: { used_percent: used, window_minutes: 10080, resets_in_seconds: 4 * 86400 } }
+      : { limit_id: "codex", primary: { used_percent: Math.min(100, used * 0.8), window_minutes: 300, resets_at: Math.floor((t + 3 * HOUR) / 1000) }, secondary: { used_percent: used, window_minutes: 10080, resets_at: Math.floor((NOW + 4 * 24 * HOUR) / 1000) }, plan_type: "plus" };
+    push("event_msg", { type: "token_count", info, rate_limits });
     // Codex often repeats the last token_count: the parser must not count it twice.
-    if (rand() < 0.3) push("event_msg", { type: "token_count", info });
+    if (rand() < 0.3) push("event_msg", { type: "token_count", info, rate_limits });
     ctx += int(1_000, 6_000);
   };
   const item = (turnId, it) => push("event_msg", { type: "item_completed", turn_id: turnId, item: it });
@@ -479,6 +483,109 @@ writeRollout(orphanId, NOW - 3 * HOUR, codexRollout({ id: orphanId, cwd: "/Users
 codexCount++;
 writeFileSync(join(CODEX, "session_index.jsonl"), threadNames.map((l) => JSON.stringify(l)).join("\n") + "\n");
 
+/**
+ * One Copilot CLI session: events.jsonl and workspace.yaml. Each model call writes a usage
+ * record (input tokens include the cache, the call's price in AI credits), then the assistant
+ * message and its tool calls. `extras` adds a failed call, a permission prompt, a sub-agent and
+ * the account's quota; `asking` leaves a question open. A prompt the agent sends a sub-agent
+ * and an autopilot continuation are user messages too, not the user's.
+ */
+function copilotSession({ id, cwd, start, prompts, model, extras = false, asking = false, quota = null }) {
+  const lines = [];
+  let t = start;
+  let parent = null;
+  const push = (type, data, extra = {}) => {
+    const e = { type, data, id: uuid(), timestamp: new Date(t).toISOString(), parentId: parent, ...extra };
+    parent = e.id;
+    lines.push(e);
+  };
+  // AI credits per million tokens (input, cache read, cache write, output), as Copilot prices them.
+  const price = model.includes("opus") ? [400, 20, 500, 2000] : model.includes("sonnet") ? [200, 10, 250, 1000] : [20, 2, 25, 120];
+  let credits = 0;
+  let ctx = int(20_000, 40_000);
+  const call = (initiator, extra) => {
+    const cacheRead = Math.floor(ctx * 0.95);
+    const cacheWrite = ctx - cacheRead - 3;
+    const output = int(100, 1_500);
+    const totalNanoAiu = Math.round((3 * price[0] + cacheRead * price[1] + cacheWrite * price[2] + output * price[3]) * 1000);
+    credits += totalNanoAiu / 1e9;
+    push("session.usage_record", { usage: { model, inputTokens: ctx, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, reasoningTokens: 0, cost: initiator === "user" ? (model.includes("opus") ? 15 : 1) : 0, initiator, isByok: false, maxPromptTokens: 200_000, cacheTtlSeconds: 300, cacheExpiresAt: new Date(t + 300_000).toISOString(), copilotUsage: { totalNanoAiu } } }, extra);
+    ctx += int(2_000, 8_000);
+  };
+  push("session.start", { sessionId: id, copilotVersion: "1.0.98", startTime: new Date(start).toISOString(), selectedModel: model, context: { cwd } });
+  prompts.forEach((text, n) => {
+    t += int(5, 60) * 1000;
+    push("user.message", { content: text, transformedContent: `<current_datetime>${new Date(t).toISOString()}</current_datetime>\n\n${text}` });
+    push("assistant.turn_start", { turnId: String(n) });
+    if (quota) push("model.model_call_success", { kind: "model_call_success", quotaSnapshots: { premium_interactions: { isUnlimitedEntitlement: false, entitlementRequests: quota.entitlement, usedRequests: quota.used + n * 30, remainingPercentage: 100 - ((quota.used + n * 30) / quota.entitlement) * 100, resetDate: quota.resetDate } } });
+    for (let i = 0; i < int(2, 5); i++) {
+      t += int(3, 20) * 1000;
+      call(i === 0 ? "user" : "agent");
+      const toolCallId = `toolu_${hex(24)}`;
+      const [toolName, args] = pick([["bash", { command: pick(["pnpm test", "git status", "rg -n TODO src"]), description: "Run a check" }], ["view", { path: `${cwd}/src/app.ts` }], ["edit", { path: `${cwd}/src/routes.ts`, old_str: "a", new_str: "b" }]]);
+      push("assistant.message", { content: "", toolRequests: [{ toolCallId, name: toolName, arguments: args }] });
+      push("tool.execution_start", { toolCallId, toolName, arguments: args });
+      t += 2_000;
+      push("tool.execution_complete", { toolCallId, success: true, result: { content: "ok" } });
+    }
+    if (extras && n === 0) {
+      // A failed call, then a permission prompt the user answered, then a sub-agent's call.
+      const failed = `toolu_${hex(24)}`;
+      call("agent");
+      push("tool.execution_start", { toolCallId: failed, toolName: "bash", arguments: { command: "kill %1" } });
+      push("tool.execution_complete", { toolCallId: failed, success: false, error: { message: "Command not executed. The 'kill' command must specify at least one numeric PID.", code: "failure" } });
+      const requestId = uuid();
+      const asked = `toolu_${hex(24)}`;
+      call("agent");
+      push("permission.requested", { requestId, permissionRequest: { kind: "shell", toolCallId: asked, fullCommandText: "git push", intention: "Running command" } });
+      t += 20_000;
+      push("permission.completed", { requestId, toolCallId: asked, result: { kind: "approved" } });
+      push("tool.execution_start", { toolCallId: asked, toolName: "bash", arguments: { command: "git push" } });
+      push("tool.execution_complete", { toolCallId: asked, success: true, result: { content: "ok" } });
+      const task = `toolu_${hex(24)}`;
+      const agentId = uuid();
+      push("tool.execution_start", { toolCallId: task, toolName: "task", arguments: { prompt: "Review the diff", description: "Review" } });
+      push("subagent.started", { toolCallId: task, agentName: "code-review", model }, { agentId });
+      push("user.message", { content: "Review the diff", source: "agent-code-review" }, { agentId });
+      call("sub-agent", { agentId });
+      push("tool.execution_start", { toolCallId: `toolu_${hex(24)}`, toolName: "view", arguments: { path: `${cwd}/src/app.ts` } }, { agentId });
+      push("subagent.completed", { toolCallId: task, agentName: "code-review" }, { agentId });
+      push("tool.execution_complete", { toolCallId: task, success: true, result: { content: "Looks good." } });
+    }
+    t += int(5, 30) * 1000;
+    call("agent");
+    push("assistant.message", { content: "Done: the change is in and the tests pass.", toolRequests: [] });
+    push("assistant.turn_end", { turnId: String(n) });
+    if (extras && n === 0) push("user.message", { content: "Continue with the next step.", source: "autopilot", isAutopilotContinuation: true });
+    push("session.usage_checkpoint", { totalNanoAiu: Math.round(credits * 1e9) });
+    t += int(30, 600) * 1000;
+  });
+  if (asking) {
+    t += 10_000;
+    push("user.message", { content: "Which database should the cache use?" });
+    call("user");
+    const toolCallId = `toolu_${hex(24)}`;
+    push("tool.execution_start", { toolCallId, toolName: "ask_user", arguments: { question: "Redis or SQLite for the cache?" } });
+  }
+  return lines;
+}
+
+rmSync(COPILOT, { recursive: true, force: true });
+const COPILOT_MODELS = ["claude-opus-5.5", "claude-sonnet-5.5", "gpt-5.6-luna"];
+let copilotCount = 0;
+for (const [day, extras, asking] of [[5, true, false], [3, false, false], [1, false, true], [0, true, false]]) {
+  const project = pick(projectNames);
+  const cwd = `/Users/demo/dev/${project}`;
+  const id = uuid();
+  const start = NOW - day * 24 * HOUR - int(1, 6) * HOUR;
+  const prompts = [pick(PROJECTS[project]), ...Array.from({ length: int(1, 3) }, () => pick(FOLLOW_UPS))];
+  const dir = join(COPILOT, "session-state", id);
+  const quota = day === 0 ? { entitlement: 1500, used: 640, resetDate: new Date(Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth() + 1, 1)).toISOString() } : null;
+  writeJsonl(join(dir, "events.jsonl"), copilotSession({ id, cwd, start, prompts, model: day === 0 ? "claude-opus-5.5" : pick(COPILOT_MODELS), extras, asking, quota }));
+  writeFileSync(join(dir, "workspace.yaml"), `id: ${id}\ncwd: ${cwd}\nclient_name: github/cli\nname: ${prompts[0].split(" ").slice(0, 5).join(" ")}\ncreated_at: ${new Date(start).toISOString()}\n`);
+  copilotCount++;
+}
+
 function mkdirp(dir) {
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -486,4 +593,5 @@ function mkdirp(dir) {
 
 console.log(`[seed-demo] wrote ${sessionCount} synthetic sessions to ${CLAUDE}`);
 console.log(`[seed-demo] wrote ${codexCount} synthetic Codex sessions to ${CODEX}`);
-console.log(`[seed-demo] run: CLAUDE_CONFIG_DIR="${CLAUDE}" CODEX_HOME="${CODEX}" pnpm dev`);
+console.log(`[seed-demo] wrote ${copilotCount} synthetic Copilot CLI sessions to ${COPILOT}`);
+console.log(`[seed-demo] run: CLAUDE_CONFIG_DIR="${CLAUDE}" CODEX_HOME="${CODEX}" COPILOT_HOME="${COPILOT}" pnpm dev`);

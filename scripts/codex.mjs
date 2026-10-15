@@ -126,6 +126,27 @@ export function codexRootOf(id, parsed) {
   }
 }
 
+/**
+ * The account's Codex limits as a token count logs them: `primary` (the 5h window) and
+ * `secondary` (the weekly one), each with its % used and reset time. Older rollouts give
+ * `resets_in_seconds` instead of `resets_at`. Other limit ids (per-model limits) are skipped.
+ */
+export function codexRateLimits(rl, tsMs) {
+  if (!rl || typeof rl !== "object" || (rl.limit_id && rl.limit_id !== "codex")) return null;
+  const win = (w) => {
+    if (!w || typeof w.used_percent !== "number") return null;
+    const resetsAt =
+      typeof w.resets_at === "number" ? w.resets_at * 1000
+      : typeof w.resets_in_seconds === "number" && tsMs ? tsMs + w.resets_in_seconds * 1000
+      : null;
+    return { usedPct: w.used_percent, resetsAt, windowMinutes: typeof w.window_minutes === "number" ? w.window_minutes : null };
+  };
+  const primary = win(rl.primary);
+  const secondary = win(rl.secondary);
+  if (!primary && !secondary) return null;
+  return { tsMs, plan: typeof rl.plan_type === "string" ? rl.plan_type : null, primary, secondary };
+}
+
 const parseJson = (s) => {
   try {
     const v = JSON.parse(s);
@@ -202,6 +223,7 @@ export async function parseCodexRollout(path) {
   let contextWindow = null;
   let openTask = false;
   let subagentOf = null;
+  let rateLimits = null;
   let metaSeen = false;
   let lastTotal = null;
   let lastPrompt = null;
@@ -469,6 +491,7 @@ export async function parseCodexRollout(path) {
         }
         case "token_count":
           onTokens(p.info, tsMs);
+          if (p.rate_limits) rateLimits = codexRateLimits(p.rate_limits, tsMs) ?? rateLimits;
           break;
         case "task_started":
           openTask = true;
@@ -551,5 +574,6 @@ export async function parseCodexRollout(path) {
     openTask,
     subagentOf,
     filesChanged: files.size,
+    rateLimits,
   };
 }
