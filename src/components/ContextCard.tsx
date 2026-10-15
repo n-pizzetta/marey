@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { adviseContext, fmtLeft, THRESHOLDS, type ContextAdvice, type ContextSnapshot } from "../../scripts/context-advice.mjs";
+import { adviseContext, expiringSoon, fmtLeft, THRESHOLDS, type ContextAdvice, type ContextSnapshot } from "../../scripts/context-advice.mjs";
 import { formatTokens } from "../utils/format";
 import { useSnapshotMap } from "../utils/liveContext";
 import { useNow } from "../utils/useNow";
@@ -19,7 +19,7 @@ function cacheText(a: ContextAdvice): string | null {
 }
 
 function cacheTone(a: ContextAdvice): "warm" | "soon" | "cold" | "unknown" {
-  if (a.cache.state === "warm") return a.cache.secsLeft !== null && a.cache.secsLeft < THRESHOLDS.expiringSoon ? "soon" : "warm";
+  if (a.cache.state === "warm") return a.cache.secsLeft !== null && a.cache.secsLeft < expiringSoon(a.cache.ttl) ? "soon" : "warm";
   return a.cache.state;
 }
 

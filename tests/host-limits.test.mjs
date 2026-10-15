@@ -60,13 +60,15 @@ test("/marey:limits sets both CLIs up and --uninstall puts them back", () => {
   for (const d of [claude, codex, bin]) mkdirSync(d);
   const codexToml = 'model = "o"\n\n[tui]\ntheme = "dark"\n';
   writeFileSync(join(codex, "config.toml"), codexToml);
-  // A stand-in for `copilot config <key> [on|off]` / `--rm <key>`, keeping footer.showQuota in a file.
-  const quota = join(root, "quota");
+  // A stand-in for `copilot config <key> [value]` / `--rm <key>`: one file per key, a group removed with its keys.
+  const conf = join(root, "copilot-settings");
+  mkdirSync(conf);
+  const setting = (key) => readFileSync(join(conf, key), "utf8").trim();
   writeFileSync(
     join(bin, "copilot"),
-    `#!/bin/sh\nshift\nif [ "$1" = "--rm" ]; then rm -f "${quota}"; exit 0; fi\n` +
-      `if [ -n "$2" ]; then [ "$2" = on ] && echo true > "${quota}" || echo false > "${quota}"; exit 0; fi\n` +
-      `[ -f "${quota}" ] || exit 1\ncat "${quota}"\n`,
+    `#!/bin/sh\nshift\nc="${conf}"\nif [ "$1" = "--rm" ]; then rm -f "$c/$2" "$c/$2".*; exit 0; fi\n` +
+      `if [ -n "$2" ]; then v="$2"; [ "$v" = on ] && v=true; [ "$v" = off ] && v=false; printf '%s\\n' "$v" > "$c/$1"; exit 0; fi\n` +
+      `[ -f "$c/$1" ] || exit 1\ncat "$c/$1"\n`,
   );
   chmodSync(join(bin, "copilot"), 0o755);
   const run = (...args) =>
@@ -78,17 +80,36 @@ test("/marey:limits sets both CLIs up and --uninstall puts them back", () => {
   const installed = run();
   assert.match(installed, /Codex: the status line now shows the context used and the 5h and weekly limits/);
   assert.match(installed, /Copilot CLI: the footer now shows your plan usage/);
+  assert.match(installed, /Copilot CLI: the status line now shows the context used and whether the 5-minute prompt cache is still warm/);
   assert.match(readFileSync(join(codex, "config.toml"), "utf8"), /status_line = \["model-with-reasoning", "context-used", "five-hour-limit", "weekly-limit"/);
   assert.equal(readFileSync(join(codex, "config.toml.marey.bak"), "utf8"), codexToml);
-  assert.equal(readFileSync(quota, "utf8").trim(), "true");
+  assert.equal(setting("footer.showQuota"), "true");
+  const script = join(claude, "marey", "copilot-statusline.mjs");
+  assert.equal(setting("statusLine.command"), `node "${script}"`);
+  assert.equal(setting("statusLine.type"), "command");
+  assert.equal(setting("statusLine.refreshInterval"), "30");
+  assert.ok(readFileSync(script, "utf8").length > 0);
+  assert.ok(readFileSync(join(claude, "marey", "context-advice.mjs"), "utf8").length > 0);
 
-  assert.match(run(), /Codex: the status line already shows/);
+  const again = run();
+  assert.match(again, /Codex: the status line already shows/);
+  assert.match(again, /Copilot CLI: the status line already shows the context and the prompt cache/);
 
   const removed = run("--uninstall");
   assert.match(removed, /Codex: status line restored/);
   assert.match(removed, /Copilot CLI: footer restored/);
+  assert.match(removed, /Copilot CLI: status line removed/);
   assert.equal(readFileSync(join(codex, "config.toml"), "utf8"), codexToml);
-  assert.throws(() => readFileSync(quota));
+  assert.throws(() => setting("footer.showQuota"));
+  assert.throws(() => setting("statusLine.command"));
+  assert.throws(() => readFileSync(script));
+
+  // A status line of the user's own is left alone, also by --uninstall.
+  writeFileSync(join(conf, "statusLine.command"), "my-line\n");
+  assert.match(run(), /Copilot CLI: you have your own status line/);
+  assert.equal(setting("statusLine.command"), "my-line");
+  run("--uninstall");
+  assert.equal(setting("statusLine.command"), "my-line");
 });
 
 test("upgrading from limits-only keeps the user's own line for --uninstall", () => {

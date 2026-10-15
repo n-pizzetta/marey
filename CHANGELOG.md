@@ -11,11 +11,17 @@ versioning follows [SemVer](https://semver.org/).
 - Copilot CLI sessions, as a third provider next to Claude Code and Codex: tokens, API value and the AI credits each session used, prompts, tool calls with failures, sub-agents, and live state on the sessions board (a question or a permission prompt waiting for you, working, your turn).
 - Now is about your plans: one card per provider with Claude Code's and Codex's 5h and weekly windows and Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed. Each bar is split by running session, in the colors of the sessions board below, which shows each running session's share of the limit.
 - Codex's and Copilot CLI's limits come from their own session files, with no setup. The top bar shows each provider's fullest window.
+- `/marey:limits` gives Copilot CLI a status line when it has none: the context used and whether its 5-minute prompt cache is still warm (`ctx ━━━───── 33% │ cache warm 3m`), with a `/clear` hint once a large context's cache is cold. Run `/marey:limits` again to get it.
 
 ### Changed
 
 - The current 5h window breakdown (what used it, by project, session and prompt) moved from the limits pill's panel to the top of Usage, for Codex too. Recommendations leave Now; Health keeps them.
 - The settings button replaces the profile chip.
+
+### Fixed
+
+- The status line no longer lets an idle session's stale limits overwrite fresher ones: `limits.json` keeps the freshest reading of each window, and `limits-history.jsonl` only grows when the window or its % does (it used to log every flip, then halve itself, keeping about 17 hours).
+- A warm 5-minute prompt cache no longer always shows as expiring soon: the warning starts in its last third.
 
 ### Removed
 
@@ -272,6 +278,11 @@ versioning follows [SemVer](https://semver.org/).
   sessions that switch models cost right. Pricing lives in one place:
   `scripts/models.mjs`, shared by the parser and the UI.
 
+### Fixed
+
+- The status line no longer lets an idle session's stale limits overwrite fresher ones: `limits.json` keeps the freshest reading of each window, and `limits-history.jsonl` only grows when the window or its % does (it used to log every flip, then halve itself, keeping about 17 hours).
+- A warm 5-minute prompt cache no longer always shows as expiring soon: the warning starts in its last third.
+
 ### Removed
 
 - Dead code: `FrictionPanel`, `Heatmap`, the `StatsStrip` wrapper, and ~110
@@ -356,6 +367,11 @@ First version. Pre-release, not yet published to GitHub.
   new `loadSessionDetail(id)` fetches full data on overlay open.
 - `App.tsx` hydrates `SessionDetail` lazily: list-derived summary
   first, then merges full payload once the fetch resolves.
+
+### Fixed
+
+- The status line no longer lets an idle session's stale limits overwrite fresher ones: `limits.json` keeps the freshest reading of each window, and `limits-history.jsonl` only grows when the window or its % does (it used to log every flip, then halve itself, keeping about 17 hours).
+- A warm 5-minute prompt cache no longer always shows as expiring soon: the warning starts in its last third.
 
 ### Removed
 

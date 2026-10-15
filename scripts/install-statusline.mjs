@@ -62,6 +62,7 @@ function removeState() {
   rmSync(STATE, { force: true });
   rmSync(TARGET, { force: true });
   rmSync(ADVICE_TARGET, { force: true });
+  rmSync(join(DIR, "copilot-statusline.mjs"), { force: true });
   rmSync(join(DIR, "limits.json"), { force: true });
   rmSync(join(DIR, "limits-history.jsonl"), { force: true });
   rmSync(join(DIR, "live"), { recursive: true, force: true });

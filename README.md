@@ -137,7 +137,7 @@ Claude Code only exposes your 5-hour and 7-day usage limits (the numbers behind 
 If Codex or Copilot CLI is installed, the same command turns on the limits in their own status lines, which they can show but don't by default:
 
 - Codex: `context-used`, `five-hour-limit` and `weekly-limit` are added to `[tui] status_line` in `~/.codex/config.toml` (backed up first), after the model: `GPT-6-Astra high · Context 12% used · 5h 42% left · weekly 76% left · ~/project`. Codex doesn't expose its prompt cache, so there is no cache countdown there.
-- Copilot CLI: `footer.showQuota` is turned on, so the footer shows `Plan: 370/5,000 (7% used)`.
+- Copilot CLI: `footer.showQuota` is turned on, so the footer shows `Plan: 370/5,000 (7% used)`. If it has no status line of yours, it gets Marey's: `ctx ━━━───── 33% │ cache warm 3m`. Copilot CLI's prompt cache only lives 5 minutes, and a cold one re-writes the whole context at a price in AI credits, so the segment turns yellow in the last 100 seconds and suggests `/clear` once it's cold on a large context. It runs `~/.claude/marey/copilot-statusline.mjs`, which reads the session's last request in `~/.copilot/session-state/`.
 
 New sessions of either CLI pick it up. `--uninstall` puts both back as they were, unless you changed them since. A plugin update refreshes the Claude Code wrapper on its own, but not these settings: run `/marey:limits` again to get what a new version adds here.
 

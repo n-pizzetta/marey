@@ -35,6 +35,7 @@ export type ContextAdvice = {
 };
 
 export const THRESHOLDS: { watch: number; act: number; coldMatters: number; coldTokens: number; expiringSoon: number };
+export function expiringSoon(ttl: string | null | undefined): number;
 export function toSnapshot(payload: unknown, now?: number): ContextSnapshot | null;
 export function adviseContext(snap: ContextSnapshot, now?: number): ContextAdvice;
 export function fmtLeft(secs: number): string;

@@ -163,3 +163,27 @@ test("credits stay unknown for sessions an older CLI logged without usage record
   assert.equal(t.aiCredits, null);
   assert.equal(t.userMessages, 1);
 });
+
+test("the Copilot status line reads the cache state from the last main-thread call", async () => {
+  const { copilotSnapshot, lastUsage } = await import("../scripts/copilot-statusline.mjs");
+  const { adviseContext, expiringSoon } = await import("../scripts/context-advice.mjs");
+  const done = copilot.find((s) => events(s.id).some((e) => e.agentId));
+  const usage = lastUsage(join(STATE, done.id, "events.jsonl"));
+  const main = usages(done.id).filter((u) => u.initiator !== "sub-agent").at(-1);
+  assert.deepEqual(usage, main);
+
+  const at = Date.parse(usage.cacheExpiresAt);
+  const payload = { session_id: done.id, context_window: { context_window_size: 200_000, used_percentage: 21.4 } };
+  const warm = copilotSnapshot(payload, usage, at - 90_000);
+  assert.deepEqual(warm.context, { usedPct: 21, size: 200_000, tokens: usage.inputTokens });
+  assert.equal(warm.cache.ttl, "5m");
+  assert.equal(warm.cache.recacheTokensIfCold, usage.cacheReadTokens + usage.cacheWriteTokens);
+  assert.equal(adviseContext(warm, at - 90_000).cache.state, "warm");
+  assert.equal(adviseContext(copilotSnapshot(payload, usage, at + 1), at + 1).cache.state, "cold");
+  assert.equal(copilotSnapshot({ session_id: "not-a-uuid" }, usage), null);
+
+  // A 5-minute cache is "expiring" in its last 100 s, not for its whole life.
+  assert.equal(expiringSoon("5m"), 100);
+  assert.equal(expiringSoon("1h"), 600);
+  assert.equal(expiringSoon(null), 600);
+});

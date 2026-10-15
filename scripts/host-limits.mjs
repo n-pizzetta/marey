@@ -1,14 +1,17 @@
 /**
  * Usage limits (and, in Codex, the context used) in the status lines of the other CLIs Marey
- * reads, via their own native items.
+ * reads, via their own native items, plus the prompt cache's state in Copilot CLI.
  *
- * Neither CLI can run Claude Code's kind of wrapper for this: Codex's status line is a list of
- * built-in items (no custom command), and Copilot CLI's `statusLine.command` payload carries no
+ * Neither CLI can run Claude Code's kind of wrapper for the limits: Codex's status line is a list
+ * of built-in items (no custom command), and Copilot CLI's `statusLine.command` payload carries no
  * limits. Both can already show their own limits, just not by default:
  *   - Codex: `[tui] status_line` gets `context-used`, `five-hour-limit` and `weekly-limit` after
  *     the model item (`GPT-6-Astra high · Context 12% used · 5h 42% left · weekly 76% left · ~/project`),
  *   - Copilot CLI: `footer.showQuota` (`Plan: 370/5,000 (7% used)`), set through `copilot config`,
  *     which also reads the comments its settings.json may contain.
+ * Copilot CLI's 5-minute cache is where a pause costs most, so when it has no status line yet, it
+ * gets copilot-statusline.mjs (`ctx ━━━───── 33% │ cache warm 3m`), copied next to its helper in
+ * Marey's data folder; a status line the user set is left alone.
  *
  * Called by install-statusline.mjs (`/marey:limits`). What was there before is saved in
  * ~/.claude/marey/host-limits.json, and `--uninstall` puts it back unless the user changed it since.
@@ -17,6 +20,11 @@ import { copyFileSync, existsSync, readFileSync, realpathSync, renameSync, rmSyn
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SCRIPTS = dirname(fileURLToPath(import.meta.url));
+/** Copilot CLI re-runs its status line on events only: a timer keeps the cache countdown moving. */
+const COPILOT_REFRESH = 30;
 
 export const LIMIT_ITEMS = ["five-hour-limit", "weekly-limit"];
 /** What Marey adds to Codex's status line: the share of the context window used, then the limits. */
@@ -171,29 +179,67 @@ function copilotConfig(...args) {
   }
 }
 
-function installCopilot(state) {
+function installCopilotQuota(state) {
   const current = copilotConfig("footer.showQuota");
   if (!current) return null;
   if (current.out === "true") return "Copilot CLI: the footer already shows your plan usage.";
   if (copilotConfig("footer.showQuota", "on")?.failed) return "Copilot CLI: could not turn on footer.showQuota; run `copilot config footer.showQuota on`.";
-  state.copilot = { previous: current.out === "false" ? false : null };
+  state.copilot = { ...state.copilot, previous: current.out === "false" ? false : null };
   return "Copilot CLI: the footer now shows your plan usage (footer.showQuota). Applies to new Copilot sessions.";
+}
+
+/** Copies the Copilot status line and its helper into Marey's data folder (a stable path across plugin updates). */
+function copyCopilotStatusline(dir) {
+  for (const name of ["copilot-statusline.mjs", "context-advice.mjs"]) copyFileSync(join(SCRIPTS, name), join(dir, name));
+  return `node "${join(dir, "copilot-statusline.mjs")}"`;
+}
+
+function installCopilotStatusline(dir, state) {
+  const current = copilotConfig("statusLine.command");
+  if (!current) return null;
+  const command = copyCopilotStatusline(dir);
+  // Set: the user's own status line, or ours (an earlier install, maybe at another path).
+  if (!current.failed && !current.out.includes("copilot-statusline.mjs")) {
+    return `Copilot CLI: you have your own status line; to add the cache segment, run ${command} from it.`;
+  }
+  if (current.out === command) return "Copilot CLI: the status line already shows the context and the prompt cache.";
+  const set = [["statusLine.type", "command"], ["statusLine.command", command], ["statusLine.refreshInterval", String(COPILOT_REFRESH)]];
+  if (set.some(([key, value]) => copilotConfig(key, value)?.failed)) {
+    copilotConfig("--rm", "statusLine");
+    return "Copilot CLI: could not set the status line; set statusLine.command to " + command + ".";
+  }
+  state.copilot = { ...state.copilot, statusLine: command };
+  return "Copilot CLI: the status line now shows the context used and whether the 5-minute prompt cache is still warm. Applies to new Copilot sessions.";
+}
+
+function installCopilot(dir, state) {
+  return [installCopilotQuota(state), installCopilotStatusline(dir, state)];
 }
 
 function uninstallCopilot(state) {
   if (!state.copilot) return null;
-  const { previous } = state.copilot;
+  const { previous, statusLine } = state.copilot;
   delete state.copilot;
-  if (copilotConfig("footer.showQuota")?.out !== "true") return "Copilot CLI: footer.showQuota changed since /marey:limits; left as is.";
-  const undo = previous === null ? copilotConfig("--rm", "footer.showQuota") : copilotConfig("footer.showQuota", "off");
-  return undo && !undo.failed ? "Copilot CLI: footer restored." : "Copilot CLI: could not restore footer.showQuota.";
+  const lines = [];
+  if (statusLine) {
+    if (copilotConfig("statusLine.command")?.out !== statusLine) lines.push("Copilot CLI: status line changed since /marey:limits; left as is.");
+    else lines.push(copilotConfig("--rm", "statusLine")?.failed ? "Copilot CLI: could not remove the status line." : "Copilot CLI: status line removed.");
+  }
+  if (previous !== undefined) {
+    if (copilotConfig("footer.showQuota")?.out !== "true") lines.push("Copilot CLI: footer.showQuota changed since /marey:limits; left as is.");
+    else {
+      const undo = previous === null ? copilotConfig("--rm", "footer.showQuota") : copilotConfig("footer.showQuota", "off");
+      lines.push(undo && !undo.failed ? "Copilot CLI: footer restored." : "Copilot CLI: could not restore footer.showQuota.");
+    }
+  }
+  return lines;
 }
 
 /** Install (or with `uninstall`, undo) the limits in Codex and Copilot CLI; returns one line per host found. */
 export function setHostLimits(dir, { uninstall = false } = {}) {
   const file = join(dir, "host-limits.json");
   const state = readState(file);
-  const lines = uninstall ? [uninstallCodex(state), uninstallCopilot(state)] : [installCodex(state), installCopilot(state)];
+  const lines = uninstall ? [uninstallCodex(state), uninstallCopilot(state)] : [installCodex(state), installCopilot(dir, state)];
   writeState(file, state);
-  return lines.filter(Boolean);
+  return lines.flat().filter(Boolean);
 }
