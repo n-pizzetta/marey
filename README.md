@@ -5,6 +5,7 @@
 <p align="center">
   <a href="https://github.com/n-pizzetta/marey/releases"><img src="https://img.shields.io/github/v/release/n-pizzetta/marey?style=flat&amp;color=08C" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat" alt="Claude Code plugin" />
+  <img src="https://img.shields.io/badge/Codex-plugin-10A37F?style=flat" alt="Codex plugin" />
   <img src="https://img.shields.io/badge/100%25%20local-no%20telemetry-3DDC97?style=flat" alt="100% local, no telemetry" />
   <img src="https://img.shields.io/badge/license-MIT-08C?style=flat" alt="License: MIT" />
 </p>
@@ -17,14 +18,14 @@
 <h3 align="center"><a href="#install"><ins>Install for Claude Code or Codex</ins></a></h3>
 
 <p align="center">
-  <img src="./docs/readme/hero.png" alt="The Marey dashboard, with a Claude Code terminal in front showing the context and prompt-cache segment Marey adds to the status line (synthetic demo data)" width="960" />
+  <img src="./docs/readme/hero.png" alt="The Now page: Claude Code, Codex and Copilot CLI plan usage split by running session, and the running sessions board, with a Claude Code terminal below showing the limits, context and prompt-cache segment Marey adds to the status line (synthetic demo data)" width="960" />
 </p>
 
 Marey reads the session data Claude Code already writes under `~/.claude/` (Codex under `~/.codex/`, Copilot CLI under `~/.copilot/`) and turns it into a local dashboard. The data is already there. Nothing visualizes it. This does.
 
 ## Features
 
-**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session, in the colors of the sessions board below, where each running session shows what it needs from you (a question, a permission, your turn) and its share of the limit. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup; Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
+**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session: point at a slice to see which session it is, or at a session on the board below to light up its slice. The board groups running sessions by what they need from you (a question, a permission, your turn) and shows each one's share of the limit. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup; Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
 
 <table>
 <tr>
@@ -36,7 +37,7 @@ Turn-by-turn view of prompts, tool calls and file diffs (versioned via `~/.claud
 
 </td>
 <td width="60%">
-  <img src="./docs/readme/replay.gif" alt="Replaying a session: overview, tool call sequence and token breakdown" width="100%" />
+  <img src="./docs/readme/replay.gif" alt="Searching for a session, then replaying it: overview, tool calls and token breakdown" width="100%" />
 </td>
 </tr>
 <tr>
@@ -60,19 +61,19 @@ Running sessions show up in real time with the current tool, context fill and pr
 
 </td>
 <td width="60%">
-  <img src="./docs/readme/live.gif" alt="A live session updating in real time with its running tool and context verdict" width="100%" />
+  <img src="./docs/readme/live.gif" alt="Pointing at the slices of the 5h bar and at the running sessions on Now, then opening a live session and its keep going verdict" width="100%" />
 </td>
 </tr>
 <tr>
 <td width="40%" valign="middle">
 
-### Fleet Dashboard
+### Usage &amp; Health
 
-Usage and health across all your projects: what is using the current 5-hour window (by project, session and prompt), tokens over time, project league, model mix, tools heatmap, health checks and anomaly flags.
+**Usage**: what is using the current 5-hour window (by project, session and prompt), then the history over the range you pick: tokens over time, project league, model mix, tools and the heaviest prompts. **Health**: recommendations backed by your own sessions, health checks and anomaly flags.
 
 </td>
 <td width="60%">
-  <img src="./docs/readme/fleet.gif" alt="Fleet dashboard cycling through rankings, health checks and analysis" width="100%" />
+  <img src="./docs/readme/fleet.gif" alt="The Usage page, from the current 5h window to 30 days of history, then the Health checks" width="100%" />
 </td>
 </tr>
 <tr>
@@ -80,11 +81,11 @@ Usage and health across all your projects: what is using the current 5-hour wind
 
 ### Filter &amp; Compare
 
-Filter by live / ghost / friction / low-outcome / low-quality or by project, navigate with `j`/`k`, and put up to three sessions side by side with min/max highlighting.
+Search goals and summaries, filter by live / ghost / friction / low-outcome / low-quality or by project, navigate with `j`/`k`, and put up to three sessions side by side with min/max highlighting.
 
 </td>
 <td width="60%">
-  <img src="./docs/readme/compare.gif" alt="Filtering sessions with friction and comparing three of them side by side" width="100%" />
+  <img src="./docs/readme/compare.gif" alt="Filtering low-outcome sessions and comparing three of them side by side" width="100%" />
 </td>
 </tr>
 <tr>
