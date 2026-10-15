@@ -39,3 +39,31 @@ test("readings flipping between sessions settle on the freshest one", () => {
 test("no limits.json clears what was held", () => {
   assert.equal(mergeLimits(limits(win(58)), null, NOW), null);
 });
+
+test("the status line keeps the freshest limits and logs only real changes", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const claude = mkdtempSync(join(tmpdir(), "marey-statusline-"));
+  const now = Math.floor(Date.now() / 1000);
+  const reset = now + 2 * 3600;
+  const week = now + 3 * 86_400;
+  const refresh = (five, seven = { used_percentage: 20, resets_at: week }) =>
+    execFileSync("node", ["scripts/statusline.mjs"], {
+      input: JSON.stringify({ session_id: "s", model: { display_name: "Opus" }, rate_limits: { ...(five ? { five_hour: five } : {}), seven_day: seven } }),
+      env: { ...process.env, CLAUDE_CONFIG_DIR: claude },
+    });
+  const held = () => JSON.parse(readFileSync(join(claude, "marey", "limits.json"), "utf8")).rate_limits;
+  const history = () => readFileSync(join(claude, "marey", "limits-history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+  refresh({ used_percentage: 51, resets_at: reset });
+  refresh({ used_percentage: 46, resets_at: reset }); // an idle session's stale reading
+  assert.equal(held().five_hour.used_percentage, 51);
+  refresh({ used_percentage: 58, resets_at: reset });
+  refresh(null); // a session without a 5h window
+  assert.equal(held().five_hour.used_percentage, 58);
+  refresh({ used_percentage: 3, resets_at: reset + 5 * 3600 }); // the next window
+  assert.equal(held().five_hour.used_percentage, 3);
+  assert.deepEqual(history().map((h) => h.five.p), [51, 58, 3]);
+});

@@ -5,8 +5,9 @@
  * Claude Code pipes a JSON payload to the status line command on every
  * refresh. It is the only place the real usage limits (`rate_limits`: 5-hour
  * and 7-day windows, as shown by `/usage`) are exposed, so this wrapper:
- *   1. records `rate_limits` to ~/.claude/marey/limits.json (and, when they
- *      change, appends them to limits-history.jsonl, used to calibrate "% of window"),
+ *   1. records `rate_limits` to ~/.claude/marey/limits.json, keeping the freshest
+ *      reading of each window across sessions (and, when it changes, appends it to
+ *      limits-history.jsonl, used to calibrate "% of window"),
  *   2. writes a sanitized per-session snapshot (context size, prompt-cache state) to
  *      ~/.claude/marey/live/<session_id>.json for the dashboard,
  *   3. hands the untouched payload to the user's previous status line command
@@ -47,30 +48,54 @@ function readStdin() {
 }
 
 const win = (w) => (w && typeof w.used_percentage === "number" ? { p: w.used_percentage, r: w.resets_at ?? null } : null);
+const WINDOWS = ["five_hour", "seven_day"];
 
-/** One line per change of either window (not per refresh), so the file stays small. */
-function appendHistory(rl) {
-  const cur = { five: win(rl.five_hour), seven: win(rl.seven_day) };
-  try {
-    const old = JSON.parse(readFileSync(LIMITS, "utf8")).rate_limits ?? {};
-    if (JSON.stringify({ five: win(old.five_hour), seven: win(old.seven_day) }) === JSON.stringify(cur)) return;
-  } catch {
-    /* no previous capture: first line */
-  }
-  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), ...cur }) + "\n");
+/**
+ * The fresher of two readings of one window, as freshestWindow in parse-sessions.mjs does: every
+ * running session refreshes its status line with its own last-known limits, so an idle one reports
+ * a lower %, or a window that has reset since. A later reset wins; within a window, the higher %;
+ * a reading without an open window never replaces one that is still open. `now` in seconds.
+ */
+function freshest(held, read, now) {
+  const open = (w) => typeof w?.used_percentage === "number" && typeof w.resets_at === "number" && w.resets_at > now;
+  if (!open(held)) return read ?? null;
+  if (!open(read) || read.resets_at < held.resets_at) return held;
+  if (read.resets_at > held.resets_at) return read;
+  return read.used_percentage >= held.used_percentage ? read : held;
+}
+
+/** One line per change of either window: a new window or a higher %, never a stale session's flip back. */
+function appendHistory(held, cur) {
+  const pick = (rl) => JSON.stringify({ five: win(rl.five_hour), seven: win(rl.seven_day) });
+  if (held && pick(held) === pick(cur)) return;
+  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), five: win(cur.five_hour), seven: win(cur.seven_day) }) + "\n");
   if (statSync(HISTORY).size > HISTORY_MAX_BYTES) {
     const lines = readFileSync(HISTORY, "utf8").split("\n").filter(Boolean);
     writeFileSync(HISTORY, lines.slice(Math.floor(lines.length / 2)).join("\n") + "\n");
   }
 }
 
+/** Keeps the freshest limits in limits.json, whichever session refreshed last. */
 function record(payload) {
   if (!payload?.rate_limits) return;
   try {
     mkdirSync(DIR, { recursive: true });
-    appendHistory(payload.rate_limits);
+    let held = null;
+    try {
+      held = JSON.parse(readFileSync(LIMITS, "utf8")).rate_limits ?? null;
+    } catch {
+      /* no previous capture: first line */
+    }
+    const now = Date.now() / 1000;
+    const cur = { ...payload.rate_limits };
+    for (const key of WINDOWS) {
+      const w = freshest(held?.[key], payload.rate_limits[key], now);
+      if (w) cur[key] = w;
+      else delete cur[key];
+    }
+    appendHistory(held, cur);
     const tmp = join(DIR, `limits.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: payload.rate_limits }));
+    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: cur }));
     renameSync(tmp, LIMITS);
   } catch {
     /* never break the status line */
