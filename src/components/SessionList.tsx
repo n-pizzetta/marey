@@ -102,6 +102,19 @@ function StatusGlyph({ s }: { s: Session }) {
   );
 }
 
+/** Height of the sticky column header, which covers the top of the page's viewport. */
+const HEAD_PX = 36;
+
+/** The element the page scrolls in (the app's content area). */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  return el.closest<HTMLElement>(".app-content") ?? (document.scrollingElement as HTMLElement | null);
+}
+
+/** Where the rows start inside the page's scrolled content. */
+function listTop(el: HTMLElement, page: HTMLElement): number {
+  return el.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
+}
+
 export function SessionList({
   sessions,
   selectedId = null,
@@ -121,17 +134,22 @@ export function SessionList({
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
 
+  // The page scrolls, not the table: what is above it (headline tiles, toolbar) leaves the screen
+  // first, then the rows. Rows are virtualized against the page's scroll container.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el || autoHeight) return;
-    const onScroll = () => setScrollTop(el.scrollTop);
-    const updateViewport = () => setViewport(el.clientHeight || 600);
-    updateViewport();
-    el.addEventListener("scroll", onScroll);
-    const ro = new ResizeObserver(updateViewport);
-    ro.observe(el);
+    const page = el ? scrollParent(el) : null;
+    if (!el || !page || autoHeight) return;
+    const update = () => {
+      setScrollTop(Math.max(0, page.scrollTop - listTop(el, page)));
+      setViewport(page.clientHeight || 600);
+    };
+    update();
+    page.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(page);
     return () => {
-      el.removeEventListener("scroll", onScroll);
+      page.removeEventListener("scroll", update);
       ro.disconnect();
     };
   }, [autoHeight]);
@@ -141,15 +159,17 @@ export function SessionList({
   const grouped = !sort || sort.key === "started";
   const { items, total } = useMemo(() => buildItems(sessions, snapshots, grouped && !autoHeight), [sessions, snapshots, grouped, autoHeight]);
 
+  // ↑ / ↓ in the session view: keep the selected row in view, below the sticky column header.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || autoHeight) return;
+    const page = el ? scrollParent(el) : null;
+    if (!el || !page || autoHeight) return;
     const item = items.find((it) => it.kind === "row" && it.s.id === selectedId);
     if (!item) return;
-    const rowTop = item.top;
+    const rowTop = listTop(el, page) + item.top;
     const rowBottom = rowTop + item.h;
-    if (rowTop < el.scrollTop || rowBottom > el.scrollTop + el.clientHeight) {
-      el.scrollTo({ top: rowTop - el.clientHeight / 3, behavior: "smooth" });
+    if (rowTop < page.scrollTop + HEAD_PX || rowBottom > page.scrollTop + page.clientHeight) {
+      page.scrollTo({ top: rowTop - page.clientHeight / 3, behavior: "smooth" });
     }
   }, [selectedId, items, autoHeight]);
 
@@ -185,7 +205,7 @@ export function SessionList({
         {sortHead("active", "Active", "Active time: idle gaps over 5 minutes are excluded")}
         {sortHead("started", "Started")}
       </div>
-      <div className="st-scroll scrollbar" ref={scrollRef}>
+      <div className="st-scroll" ref={scrollRef}>
         {sessions.length === 0 ? (
           <div className="list-empty dim">{emptyText}</div>
         ) : (

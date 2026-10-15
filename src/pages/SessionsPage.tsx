@@ -48,7 +48,7 @@ export function SessionsPage({
     : `Pick up to ${compareLimit} sessions to compare · ${compareIds.size} selected`;
 
   return (
-    <div className="page page-fill">
+    <div className="page page-sessions">
       <div className="sessions-toolbar">
         <span className="sessions-hint dim">{hint}</span>
         {compareMode && ghostsFocused && (
