@@ -12,6 +12,7 @@ import { basename, dirname, join } from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { normalizeModel } from "./models.mjs";
+import { createContextCollector } from "./agent-context.mjs";
 import {
   addTokens,
   countShellKinds,
@@ -208,6 +209,10 @@ export async function parseCodexRollout(path) {
   /** call id → where the call was recorded, so a later event can rename it. */
   const calls = new Map();
   const files = new Set();
+  // The Context page: files created, edited or deleted, and the sub-agents this thread spawned.
+  const context = createContextCollector();
+  const spawns = [];
+  let spawn = null;
   const shell = { prs: 0, tests: 0, lints: 0, infra: 0 };
   let userMessages = 0;
   let commits = 0;
@@ -274,6 +279,14 @@ export async function parseCodexRollout(path) {
     }
     const patched = typeof input.patch === "string" ? patchFiles(input.patch) : [];
     for (const f of patched) files.add(f.startsWith("/") || !cwd ? f : join(cwd, f));
+    if (typeof input.patch === "string") {
+      for (const m of input.patch.matchAll(/^\*\*\* (Add|Update|Delete) File: (.+)$/gm)) {
+        context.write(tsMs, m[2].startsWith("/") || !cwd ? m[2] : join(cwd, m[2]), m[1] === "Add" ? "create" : m[1] === "Delete" ? "delete" : "edit");
+      }
+    }
+    if (rawName === "spawn_agent") {
+      spawns.push({ task: typeof input.task_name === "string" ? input.task_name : null, fork: typeof input.fork_turns === "string" ? input.fork_turns !== "none" : input.fork_turns != null });
+    }
     const id = p.call_id ?? p.id;
     let entry = null;
     if (toolSequence.length < 300) {
@@ -337,7 +350,11 @@ export async function parseCodexRollout(path) {
       const changed = Array.isArray(item.changes) ? item.changes : Object.keys(item.changes ?? {});
       name = "apply_patch";
       input = { path: changed.join(", ") };
-      for (const f of changed) files.add(f);
+      for (const f of changed) {
+        files.add(f);
+        const kind = Array.isArray(item.changes) ? null : item.changes[f]?.type;
+        context.write(tsMs, f, kind === "add" ? "create" : kind === "delete" ? "delete" : "edit");
+      }
       body = typeof item.stdout === "string" ? item.stdout : "";
     } else if (type === "Extension") {
       name = item.kind === "web.search" ? "web_search" : typeof item.kind === "string" ? item.kind : "extension";
@@ -439,11 +456,12 @@ export async function parseCodexRollout(path) {
       if (!metaSeen) {
         metaSeen = true;
         // A sub-agent thread gets its own rollout; `session_id` is the root thread.
-        const spawn = p.source?.subagent?.thread_spawn;
+        const thread = p.source?.subagent?.thread_spawn;
         if (p.thread_source === "subagent" || p.source?.subagent) {
+          spawn = { name: typeof thread?.agent_nickname === "string" ? thread.agent_nickname : null, task: typeof thread?.agent_path === "string" ? thread.agent_path : null };
           subagentOf = {
             rootId: typeof p.session_id === "string" && p.session_id !== p.id ? p.session_id : null,
-            parentId: p.parent_thread_id ?? spawn?.parent_thread_id ?? null,
+            parentId: p.parent_thread_id ?? thread?.parent_thread_id ?? null,
           };
         }
       }
@@ -506,7 +524,10 @@ export async function parseCodexRollout(path) {
           break;
         case "patch_apply_end":
           if (p.success === false && p.call_id) markError(p.call_id);
-          for (const f of Object.keys(p.changes ?? {})) files.add(f);
+          for (const [f, change] of Object.entries(p.changes ?? {})) {
+            files.add(f);
+            context.write(tsMs, f, change?.type === "add" ? "create" : change?.type === "delete" ? "delete" : "edit");
+          }
           break;
         case "mcp_tool_call_end": {
           if (p.result?.Err || p.result?.Ok?.isError) markError(p.call_id);
@@ -573,6 +594,9 @@ export async function parseCodexRollout(path) {
     contextWindow,
     openTask,
     subagentOf,
+    context: context.finish(),
+    spawns,
+    spawn,
     filesChanged: files.size,
     rateLimits,
   };

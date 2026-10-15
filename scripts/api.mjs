@@ -20,6 +20,7 @@ import { focusSession } from "./focus-terminal.mjs";
 import { buildRecommendations } from "./recommendations.mjs";
 import { codexLimits, copilotLimits } from "./provider-limits.mjs";
 import { readCodexLiveLimits } from "./codex-live-limits.mjs";
+import { buildAgentContext } from "./agent-context.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -59,6 +60,10 @@ const cache = {
   /** Freshest Codex limits and Copilot quota logged in their sessions (provider-limits.mjs). */
   readings: { codex: null, copilot: null },
 };
+
+/** The Context page per project, rebuilt after each parse or after 30 s (git and the memory folder move on their own). */
+const agentContextCache = new Map();
+const AGENT_CONTEXT_TTL_MS = 30_000;
 
 /** Codex's limits asked live (codex-live-limits.mjs): once a minute while the dashboard polls them. */
 const codexLive = { reading: null, nextAt: 0, pending: false };
@@ -282,7 +287,9 @@ async function handleApi(req, res) {
     const s = cache.byId.get(sessionMatch[1]);
     if (!s) return send(res, 404, "session not found");
     res.setHeader("cache-control", "no-store");
-    return sendJson(res, 200, s);
+    // The Context page's raw signals stay out of the detail payload.
+    const { agentContext: _context, ...detail } = s;
+    return sendJson(res, 200, detail);
   }
 
   if (url.startsWith("/api/parse-error/")) {
@@ -324,6 +331,24 @@ async function handleApi(req, res) {
       return send(res, 200, body);
     } catch {
       return send(res, 404, "file not found");
+    }
+  }
+
+  // What the agents of one project had in mind and left on disk (scripts/agent-context.mjs).
+  if (url === "/api/agent-context" || url.startsWith("/api/agent-context?")) {
+    const project = new URLSearchParams(url.split("?")[1] ?? "").get("project");
+    if (!project) return send(res, 400, "missing project");
+    res.setHeader("cache-control", "no-store");
+    const now = Date.now();
+    const hit = agentContextCache.get(project);
+    if (hit && hit.generatedAt === cache.generatedAt && now - hit.at < AGENT_CONTEXT_TTL_MS) return send(res, 200, hit.body, JSON_TYPE);
+    try {
+      const body = JSON.stringify(buildAgentContext(cache.sessions, { project, claudeDir: CLAUDE, now }));
+      agentContextCache.set(project, { generatedAt: cache.generatedAt, at: now, body });
+      return send(res, 200, body, JSON_TYPE);
+    } catch (e) {
+      console.error("[marey] agent context error:", e);
+      return send(res, 500, e.message);
     }
   }
 

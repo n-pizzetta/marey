@@ -11,7 +11,7 @@
  * Deterministic (seeded) except for timestamps, which are relative to now so
  * the "today", 7d and 5h views are populated.
  */
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -219,6 +219,8 @@ rmSync(CLAUDE, { recursive: true, force: true });
 
 let sessionCount = 0;
 const projectNames = Object.keys(PROJECTS);
+/** Claude Code sessions written, for the Context pass below. */
+const claudeSeeded = [];
 for (let day = 6; day >= 0; day--) {
   const perDay = day === 0 ? 6 : int(3, 6);
   for (let k = 0; k < perDay; k++) {
@@ -242,6 +244,8 @@ for (let day = 6; day >= 0; day--) {
       writeFileSync(join(subDir, `agent-${sub.agentId}.meta.json`), JSON.stringify({ agentType: "general-purpose", description: sub.description }));
     }
 
+    claudeSeeded.push({ id, cwd, slug, project, start, model, subIds: subs.map((sub) => sub.agentId) });
+
     // The versions Claude Code keeps of the files it edits: one per Edit / Write of a file.
     writeFileHistory(id, lines);
 
@@ -261,6 +265,79 @@ for (let day = 6; day >= 0; day--) {
     }
     sessionCount++;
   }
+}
+
+/**
+ * What the Context page reads (scripts/agent-context.mjs): the instruction files each session
+ * loaded at start (an `instructions` attachment, copied into its sub-agents), and one project's
+ * memory folder that its sessions write, then re-read. One sub-agent is an Explore, which gets no
+ * instruction file. Deterministic: no rand().
+ */
+const MEMORY_PROJECT = "acme-api";
+const MEMORIES = [
+  ["project-rate-limits.md", "Rate limits", "per endpoint, 100 req/min, counted in Redis", "Rate limiting is per endpoint, decided after the checkout incident"],
+  ["feedback-tests.md", "Test style", "integration tests hit a real Postgres, no mocks", "Integration tests use a real database"],
+  ["reference-staging.md", "Staging", "staging.acme.test, deploy with make ship", "Where staging runs and how to deploy it"],
+  // The index line and the file disagree: the page shows both.
+  ["project-auth-migration.md", "Auth migration", "sessions move to the new store; old middleware removed", "Auth middleware stays until the mobile app ships"],
+];
+const USER_MD = "# Demo rules\n\nUse pnpm. Conventional commits.\nNever push without a review.\n";
+writeFileSync(join(CLAUDE, "CLAUDE.md"), USER_MD);
+const memorySessions = claudeSeeded.filter((s) => s.project === MEMORY_PROJECT).sort((a, b) => a.start - b.start);
+const readLines = (path) => readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+const exploreSession = memorySessions.find((s, i) => i >= 1 && s.subIds.length > 0);
+for (const s of claudeSeeded) {
+  const memDir = join(CLAUDE, "projects", s.slug, "memory");
+  const order = memorySessions.indexOf(s);
+  // The index exists once the first memory was written, so from the second session on.
+  const files = [
+    { path: join(CLAUDE, "CLAUDE.md"), type: "User", content: USER_MD },
+    ...(order > 0 ? [{ path: join(memDir, "MEMORY.md"), type: "AutoMem", content: MEMORIES.slice(0, order).map(([f, title, hook]) => `- [${title}](${f}) — ${hook}`).join("\n") }] : []),
+  ];
+  const instructions = (sessionId, extra = {}) => ({ type: "attachment", sessionId, cwd: s.cwd, timestamp: new Date(s.start).toISOString(), attachment: { type: "instructions", files }, ...extra });
+  const path = join(CLAUDE, "projects", s.slug, `${s.id}.jsonl`);
+  const lines = readLines(path);
+  lines.unshift(instructions(s.id));
+  if (order >= 0) {
+    // Write this session's memory, then re-read the one written two sessions before.
+    const firstPrompt = lines.findIndex((l) => l.type === "user");
+    const at = Date.parse(lines[firstPrompt].timestamp);
+    const ops = [];
+    const op = (name, file, k) => {
+      const toolId = `toolu_mem${order}${k}`;
+      const ts = new Date(at + (k + 1) * 2000).toISOString();
+      ops.push(
+        { type: "assistant", sessionId: s.id, cwd: s.cwd, timestamp: ts, message: { id: `msg_mem${order}${k}`, role: "assistant", model: s.model, content: [{ type: "tool_use", id: toolId, name, input: name === "Write" ? { file_path: join(memDir, file), content: "…" } : { file_path: join(memDir, file) } }], usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } },
+        { type: "user", sessionId: s.id, cwd: s.cwd, timestamp: ts, message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: name === "Write" ? "File created successfully." : "1\t---" }] } },
+      );
+    };
+    if (MEMORIES[order]) op("Write", MEMORIES[order][0], 0);
+    if (order >= 2 && MEMORIES[order - 2]) op("Read", MEMORIES[order - 2][0], 1);
+    lines.splice(firstPrompt + 1, 0, ...ops);
+    if (MEMORIES[order]) {
+      const [file, title, , description] = MEMORIES[order];
+      mkdirSync(memDir, { recursive: true });
+      const memPath = join(memDir, file);
+      writeFileSync(memPath, `---\nname: ${file.replace(/\.md$/, "")}\ndescription: ${description}\nmetadata:\n  type: ${file.split("-")[0]}\n---\n\n${title}.\n`);
+      utimesSync(memPath, new Date(at + 2000), new Date(at + 2000));
+    }
+  }
+  writeJsonl(path, lines);
+  for (const [i, agentId] of s.subIds.entries()) {
+    const subPath = join(CLAUDE, "projects", s.slug, s.id, "subagents", `agent-${agentId}.jsonl`);
+    const subLines = readLines(subPath);
+    // An Explore sub-agent logs its prompt but no instruction file: it gets none.
+    if (s === exploreSession && i === 0) {
+      subLines.unshift({ type: "attachment", sessionId: s.id, timestamp: new Date(s.start).toISOString(), attachment: { type: "prompt_snapshot", systemPrompt: ["You are a read-only search agent."] } });
+      const metaPath = subPath.replace(/\.jsonl$/, ".meta.json");
+      writeFileSync(metaPath, JSON.stringify({ ...JSON.parse(readFileSync(metaPath, "utf8")), agentType: "Explore" }));
+    } else subLines.unshift(instructions(s.id, { isSidechain: true, agentId }));
+    writeJsonl(subPath, subLines);
+  }
+}
+if (memorySessions.length > 1) {
+  const memDir = join(CLAUDE, "projects", memorySessions[0].slug, "memory");
+  writeFileSync(join(memDir, "MEMORY.md"), MEMORIES.slice(0, memorySessions.length).map(([f, title, hook]) => `- [${title}](${f}) — ${hook}`).join("\n") + "\n");
 }
 
 // Usage limits as recorded by the status line wrapper.
