@@ -6,11 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-
-- Picking a project on Context no longer filters Sessions, Usage and Health: Context keeps its own
-  project. A project filtered on Sessions still carries over to Context.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -23,6 +18,13 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.11.1] — 2026-10-15
+
+### Fixed
+
+- Picking a project on Context no longer filters Sessions, Usage and Health: Context keeps its own
+  project. A project filtered on Sessions still carries over to Context.
 
 ## [0.11.0] — 2026-10-15
 
