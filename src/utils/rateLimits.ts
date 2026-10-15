@@ -13,6 +13,8 @@ export type LimitWindow = { usedPct: number; resetsAt: number | null };
 export type ProviderLimits = {
   /** When the reading was taken: Codex and Copilot only log their limits with a request. */
   capturedAt: number | null;
+  /** Codex: asked live (`codex app-server`) rather than read from its last request. */
+  live?: boolean;
   plan?: string | null;
   fiveHour?: LimitWindow | null;
   sevenDay?: LimitWindow | null;

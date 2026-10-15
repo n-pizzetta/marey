@@ -24,8 +24,8 @@ function sourceNote(usage: PlanUsage, now: number): string | null {
   const at = usage.limits?.capturedAt;
   if (!at) return null;
   const ago = now - at;
-  if (usage.provider === "claude") return ago < 120_000 ? "live" : `as of ${formatLeft(ago)} ago`;
-  // Codex and Copilot log their limits with each request: as old as the last one.
+  if (usage.provider === "claude" || usage.limits?.live) return ago < 120_000 ? "live" : `as of ${formatLeft(ago)} ago`;
+  // Otherwise Codex and Copilot log their limits with each request: as old as the last one.
   return ago < 120_000 ? "last request just now" : `last request ${formatLeft(ago)} ago`;
 }
 
@@ -169,7 +169,8 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
 function resetText(w: PlanWindow, now: number): string {
   if (w.resetsAt !== null) return `resets in ${formatLeft(w.resetsAt - now)} · ${formatResetAt(w.resetsAt, now)}`;
   if (w.key === "fiveHour" && w.fromMs !== null) return `resets in ~${formatLeft(w.fromMs + w.spanMs - now)}`;
-  if (w.key === "fiveHour") return "idle";
+  // A week at 0% with no reset time has not started either (Codex reports it so while unopened).
+  if (w.key === "fiveHour" || (w.key === "sevenDay" && w.usedPct === 0)) return "idle";
   return "";
 }
 

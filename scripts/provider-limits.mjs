@@ -7,7 +7,8 @@
  * - Copilot CLI: the monthly quota of AI credits, logged with every model call (copilot.mjs).
  *
  * The last two are per account: the freshest reading among all sessions wins. They are as fresh as
- * the last request made with that CLI on this machine (`capturedAt`).
+ * the last request made with that CLI on this machine (`capturedAt`), unless Codex's live reading
+ * (codex-live-limits.mjs) is fresher.
  */
 
 const FIVE_HOUR_MIN = 300;
@@ -30,12 +31,12 @@ export function freshest(parsed, key) {
 }
 
 /**
- * Codex limits from a rollout's reading (`rateLimits` from codex.mjs), each window placed by its
- * length: the 5h one, then anything longer than a day as the weekly one.
+ * Codex limits from a rollout's reading (`rateLimits` from codex.mjs) or a live one, each window
+ * placed by its length: the 5h one, then anything longer than a day as the weekly one.
  */
 export function codexLimits(best, now = Date.now()) {
   if (!best) return null;
-  const out = { capturedAt: best.tsMs ?? null, plan: best.plan, fiveHour: null, sevenDay: null };
+  const out = { capturedAt: best.tsMs ?? null, plan: best.plan, ...(best.live ? { live: true } : {}), fiveHour: null, sevenDay: null };
   for (const [slot, w] of [["fiveHour", best.primary], ["sevenDay", best.secondary]]) {
     if (!w) continue;
     const key = w.windowMinutes === null ? slot : w.windowMinutes <= 1440 ? "fiveHour" : "sevenDay";
