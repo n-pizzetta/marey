@@ -254,7 +254,10 @@ export function SessionDetail({
   const toolCallCount = Object.values(session.toolCounts ?? {}).reduce((a, n) => a + n, 0);
 
   const shellEscape = (s: string) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
-  const resume = session.agent === "codex" ? `codex resume ${session.id}` : `claude --resume ${session.id}`;
+  const resume =
+    session.agent === "codex" ? `codex resume ${session.id}`
+    : session.agent === "copilot" ? `copilot --resume ${session.id}`
+    : `claude --resume ${session.id}`;
   const resumeCmd = session.cwd ? `cd ${shellEscape(session.cwd)} && ${resume}` : resume;
   const copyResume = async () => {
     try {
@@ -313,7 +316,7 @@ export function SessionDetail({
             ) : null}
           </div>
           <div className="detail-toolbar-right">
-            {session.agent !== "codex" && <LimitsPill />}
+            <LimitsPill providers={[session.agent ?? "claude"]} />
             <button
               className="toolbar-btn wide"
               onClick={() => downloadSessionHtml(session)}
@@ -366,7 +369,7 @@ export function SessionDetail({
                   title={
                     session.outcome === "in_progress"
                       ? "Session is currently running. Outcome is set to 'in progress' while live; an outcome is assessed later when /insights analyzes it."
-                      : session.agent === "codex"
+                      : session.agent === "codex" || session.agent === "copilot"
                       ? "Outcome unknown: /insights only analyzes Claude Code sessions."
                       : session.outcome === "unknown"
                       ? "Outcome unknown: /insights hasn't analyzed this session yet (it assesses sessions in batch). Run /insights in Claude Code to fill it in."
@@ -765,7 +768,7 @@ function OverviewTab({
           <FrictionsCard session={session} onOpen={onOpen} />
         ) : session.outcome === "unknown" || session.outcome === "in_progress" ? (
           <div className="clean-row dim">
-            {session.agent === "codex" ? "Frictions not analyzed · /insights only covers Claude Code" : "Frictions not analyzed yet · run /insights in Claude Code"}
+            {session.agent === "codex" || session.agent === "copilot" ? "Frictions not analyzed · /insights only covers Claude Code" : "Frictions not analyzed yet · run /insights in Claude Code"}
           </div>
         ) : (
           <div className="clean-row">
@@ -1639,6 +1642,8 @@ function FilesTab({ session }: { session: Session }) {
           <div className="mono dim" style={{ marginTop: 6 }}>
             {session.agent === "codex" ? (
               "Codex keeps no file snapshots: the count above comes from its patches."
+            ) : session.agent === "copilot" ? (
+              "Marey doesn't read Copilot CLI's file snapshots yet: the count above comes from its edits."
             ) : (
               <>Claude Code writes versions to <code>~/.claude/file-history/{"{sessionId}"}/</code> only when it edits files.</>
             )}

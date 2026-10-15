@@ -233,7 +233,6 @@
 .page-section-head h2 { font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.015em; color: var(--c-text); }
 .page-section-note { font-size: var(--fs-base); color: var(--c-text-dim); }
 .page-section-aside { display: flex; align-items: center; margin-left: auto; }
-.page-section-aside .live-burn { margin-left: 0; }
 
 .page-grid-3 {
   display: grid;
@@ -744,6 +743,9 @@
   .app-header-right { order: 2; width: 100%; margin-left: 0; justify-content: space-between; }
 }
 @media (max-width: 520px) {
-  .limits-pill-bar { width: 40px; }
-  .app-header .limits-pill { padding-inline: 10px; }
+  .limits-pill-bar { width: 28px; }
+  .app-header .limits-pill { flex-wrap: wrap; gap: 4px 12px; min-width: 0; padding-inline: 10px; }
+  /* three providers on a phone: drop the window keys, the tooltip still names them */
+  .app-header .limits-pill-item > .limits-pill-label { display: none; }
+  .app-header .limits-pill-group { gap: 6px; }
 }

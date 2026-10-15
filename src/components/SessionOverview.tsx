@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Session } from "../types";
 import { costOf } from "../../scripts/models.mjs";
 import { formatClockAt, formatCost, formatDuration, formatTokens } from "../utils/format";
+import { formatCredits } from "../utils/planFormat";
 import { buildSessionTimeline } from "../utils/sessionTimeline";
 import { countCalls, countFailed } from "../utils/toolCalls";
 import { API_VALUE_HINT, freshTokens, useUnit } from "../utils/units";
@@ -24,10 +25,12 @@ export function SessionKpis({ session, onOpen }: { session: Session; onOpen: (to
   const toolCalls = seq.length ? countCalls(seq) : Object.values(session.toolCounts ?? {}).reduce((a, n) => a + n, 0);
   const failed = countFailed(seq);
   const fresh = freshTokens(session.tokens);
+  // Copilot CLI bills AI credits against its monthly quota: the figure that matters there.
+  const credits = session.agent === "copilot" && session.aiCredits != null ? ` · ${formatCredits(session.aiCredits)} AI credits` : "";
   const weight: KpiItem =
     unit === "tokens"
-      ? { label: "Fresh tokens", value: formatTokens(fresh), sub: `${formatCost(session.costUsd)} API value`, title: "Input + output + cache writes; cached reads weigh far less. Open the Tokens tab for each kind and each prompt." }
-      : { label: "API value", value: formatCost(session.costUsd), sub: `${formatTokens(fresh)} fresh tokens`, title: `${API_VALUE_HINT} Open the Tokens tab for each kind and each prompt.` };
+      ? { label: "Fresh tokens", value: formatTokens(fresh), sub: `${formatCost(session.costUsd)} API value${credits}`, title: "Input + output + cache writes; cached reads weigh far less. Open the Tokens tab for each kind and each prompt." }
+      : { label: "API value", value: formatCost(session.costUsd), sub: `${formatTokens(fresh)} fresh tokens${credits}`, title: `${API_VALUE_HINT} Open the Tokens tab for each kind and each prompt.` };
   const callsSub = [failed > 0 && `${failed} failed`, session.subAgents > 0 && plural(session.subAgents, "sub-agent")].filter(Boolean).join(" · ");
 
   return (

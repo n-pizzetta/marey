@@ -2,10 +2,11 @@
   "name": "marey",
   "private": true,
   "version": "0.8.0",
-  "description": "Visual debugger and analytics dashboard for Claude Code and Codex sessions",
+  "description": "Dashboard for Claude Code, Codex and Copilot CLI sessions: plan usage, running sessions and replay",
   "keywords": [
     "claude-code",
     "codex",
+    "copilot",
     "anthropic",
     "debugger",
     "replay",

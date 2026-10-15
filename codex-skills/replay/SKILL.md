@@ -1,6 +1,6 @@
 ---
 name: replay
-description: Open the local Marey dashboard in a browser to replay and analyze Claude Code and Codex sessions. Use when the user asks to launch or open Marey.
+description: Open the local Marey dashboard in a browser: plan usage, running sessions and replay for Claude Code, Codex and Copilot CLI sessions. Use when the user asks to launch or open Marey.
 ---
 
 Start the bundled dashboard with Node.js 20+:

@@ -21,7 +21,7 @@ interface Props {
 
 /**
  * The scope of the Sessions, Usage and Health pages: one bar, one place.
- * Every figure under it follows it; pages without it (Now, Badges) ignore it.
+ * Every figure under it follows it; the Now page, which has none, ignores it.
  */
 export function ScopeBar({
   range,

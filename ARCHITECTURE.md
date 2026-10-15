@@ -1,6 +1,6 @@
 # Architecture
 
-Marey is a local dashboard for Claude Code and Codex sessions, packaged for npm (`npx marey`), Claude Code (`/marey:replay`) and Codex (the `marey:replay` skill). A Node server parses the files Claude Code already writes under `~/.claude/` (and Codex under `~/.codex/`, §3), keeps the result in memory and serves it to a React single-page app over a small local API.
+Marey is a local dashboard for Claude Code, Codex and Copilot CLI sessions, packaged for npm (`npx marey`), Claude Code (`/marey:replay`) and Codex (the `marey:replay` skill). A Node server parses the files Claude Code already writes under `~/.claude/` (Codex under `~/.codex/`, Copilot CLI under `~/.copilot/`, §3), keeps the result in memory and serves it to a React single-page app over a small local API.
 
 There is no database, no network access beyond loopback except the daily update check (`scripts/update-check.mjs`), and no runtime dependency besides Node's standard library on the server side.
 
@@ -14,8 +14,7 @@ There is no database, no network access beyond loopback except the daily update 
  ├── projects/<slug>/<id>/subagents/*.jsonl      ├── limits.json           ◀── statusline.mjs
  ├── sessions/<pid>.json                         ├── models.json           (user, optional)
  ├── usage-data/session-meta/<id>.json           ├── statusline.mjs/.json  ◀── install-statusline.mjs
- ├── usage-data/facets/<id>.json                 ├── badges.json           ◀── api.mjs
- │                                               └── sessions.json         ◀── `pnpm parse` only
+ ├── usage-data/facets/<id>.json                 └── sessions.json         ◀── `pnpm parse` only
  ├── usage-data/report.html
  ├── file-history/<id>/<hash>@v<n>
  ├── history.jsonl
@@ -23,6 +22,8 @@ There is no database, no network access beyond loopback except the daily update 
                     ▼
       scripts/parse-sessions.mjs  ── parseAllSessions() / summarizeSession()
       scripts/codex.mjs           ── ~/.codex/sessions/**/rollout-*.jsonl → same shape
+      scripts/copilot.mjs         ── ~/.copilot/session-state/*/events.jsonl → same shape
+      scripts/provider-limits.mjs ── Codex limits and Copilot quota from those files
       scripts/models.mjs          ── pricing table, shared with the UI
                     │
                     ▼
@@ -36,11 +37,11 @@ There is no database, no network access beyond loopback except the daily update 
           └──────────────┬────────────────────┘
                          ▼
       src/data/loadSessions.ts  (list, ETag-revalidated) · loadSessionDetail(id)
-      src/utils/rateLimits.ts   (/api/limits)
+      src/utils/rateLimits.ts   (/api/limits, every provider)
                          │
                          ▼
       src/App.tsx ─┬─ AppHeader · ScopeBar (+ SessionFilters) · StatsRow
-                   ├─ pages/: Now · Sessions (SessionList, SessionCompare) · Usage · Health · Progress
+                   ├─ pages/: Now (PlanCard, SessionBoard) · Sessions (SessionList, SessionCompare) · Usage · Health
                    └─ SessionDetail overlay (Overview · Timeline · Tools · Tokens · Files)
 ```
 
@@ -65,12 +66,13 @@ All paths are relative to the Claude config dir: `~/.claude`, or `$CLAUDE_CONFIG
 
 Codex (`~/.codex`, or `$CODEX_HOME`), also read-only: `sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`, `archived_sessions/` and `session_index.jsonl` (thread names). See "Codex rollouts" in §3.
 
+Copilot CLI (`~/.copilot`, or `$COPILOT_HOME`), also read-only: `session-state/<id>/events.jsonl` (the session), `workspace.yaml` (name, cwd), `inuse.<pid>.lock` (the process holding it) and `open-sessions-state.json` (whether an open session is working). See "Copilot CLI sessions" in §3.
+
 ### Written
 
 - Everything Marey writes by itself lives under `~/.claude/marey/` (`scripts/data-dir.mjs`). Before the rename it was `~/.claude/ccblackbox/`: the first call to `dataDir()` (API, parser, plugin hook, `/marey:limits`) moves that folder and leaves a symlink at the old path, so a status line wrapper or an older plugin still writing there lands in the same place:
   - `cache/<id>.jsonl`: one line per tool call / stop, appended by the plugin hook (mode `0600`).
   - `limits.json`: latest `rate_limits` payload, written atomically by the status line wrapper. `limits-history.jsonl`: one line per change of either window (`{t, five:{p,r}, seven:{p,r}}`, trimmed at 512 KB), kept to calibrate "% of window" later.
-  - `badges.json`: `{ startedAt, unlocked, xp }`. `startedAt` is written on the API's first parse (first launch); `unlocked` maps `<family>:<tier>` to the unlock date; `xp` maps a session id to the best XP it earned. See §5.
   - `live/<session_id>.json`: sanitized per-session snapshot (context size, prompt-cache state; no paths or prompts) written on every refresh; the API removes ones older than 3 days.
   - `statusline.mjs`, `context-advice.mjs`, `statusline.json`: installed wrapper, its shared helper, and the saved previous `statusLine` setting (plus `"verdict": false` to hide the terminal segment).
   - `host-limits.json`: what `/marey:limits` changed in Codex and Copilot CLI (the previous `[tui] status_line` items, whether `footer.showQuota` was set), for `--uninstall`.
@@ -98,7 +100,7 @@ Used as a library by `scripts/api.mjs`, and as a CLI (`pnpm parse`) that writes 
 5. `collectLive()` expands each alive pid file to its `/clear` chain (sibling transcripts in the same project dir with the same `custom-title`, modified later); only the newest in the chain is marked live.
 6. Meta files are read; one without `session_id` or `start_time` is reported in `errors` (surfaced as a badge in the top bar with a Trash action).
 7. `buildSession()` runs for the union of transcript ids, meta ids and live ids.
-8. Codex rollouts (`indexCodexRollouts()`, see "Codex rollouts" below) are parsed, skipping ids already built from `~/.claude`. Sub-agent rollouts are merged into their root session (`codexRootOf`); every other rollout goes through the same `buildSession()` with `agent: "codex"`.
+8. Codex rollouts (`indexCodexRollouts()`, see "Codex rollouts" below) are parsed, skipping ids already built from `~/.claude`. Sub-agent rollouts are merged into their root session (`codexRootOf`); every other rollout goes through the same `buildSession()` with `agent: "codex"`. Then Copilot CLI sessions (`indexCopilotSessions()`, see "Copilot CLI sessions" below), with `agent: "copilot"`. The freshest Codex limits and Copilot quota any of them logged are returned as `readings` (§5).
 9. Post-passes: `linkClearedChains()` sets `clearedFrom` / `clearedInto` (same `cwd` + `customTitle`), `reassignLiveToChainTail()` moves the live flag to the chain tail, `markUnpriced()` lists models without a pricing row.
 
 Sessions are returned sorted by `startedAt` descending. Helpers shared by both parsers (`countShellKinds`, `longestRun`, token sums) live in `scripts/transcript-utils.mjs`.
@@ -134,6 +136,20 @@ Sessions are returned sorted by `startedAt` descending. Helpers shared by both p
 - **Live**: a task started without `task_complete` / `turn_aborted`, a rollout written in the last 30 minutes, a running `codex` process and, when `lsof` is available (run asynchronously, only for those candidates), a codex process holding the rollout open (Codex keeps it open while a task runs). Without `lsof`, any running codex process (such as the IDE extension's server) is enough.
 - **Not available**: context-quality score, ghosts (ghost actions only know `~/.claude/projects`), file-history snapshots, `/insights` fields, compaction counts. `contextWindow` comes from `model_context_window` and replaces the 200k / 1M guess in the Timeline tab.
 - `codex resume <id>` replaces `claude --resume` in the session view.
+- **Limits** (`rateLimits`): every `token_count` event carries the account's `rate_limits`: `primary` (5h, `window_minutes: 300`) and `secondary` (weekly), each with `used_percent` and `resets_at` (older CLIs: `resets_in_seconds`), plus `plan_type`. The last one of each rollout is kept with its time (`codexRateLimits`); limit ids other than `codex` are skipped.
+
+### Copilot CLI sessions (`scripts/copilot.mjs`)
+
+`parseCopilotEvents()` returns the same intermediate shape from Copilot CLI's `events.jsonl` (one event per line: `type`, `timestamp`, `data`, and `agentId` on a sub-agent's events). Only the event types it uses are parsed; hooks, model snapshots and binary assets are skipped from the line's prefix, unparsed, since a long session's file reaches tens of MB.
+
+- **Turns**: one per `session.usage_record` (each model call). `inputTokens` includes cache reads and writes, as with OpenAI: `input = inputTokens − cacheReadTokens − cacheWriteTokens`; cache writes are 5-minute ones (`cacheTtlSeconds: 300`). A sub-agent's calls (`agentId`, or `initiator: "sub-agent"`) are flagged `sidechain`. `maxPromptTokens` is the context window.
+- **AI credits**: each call's price in AI credits is `copilotUsage.totalNanoAiu / 1e9`, whoever started it (user, agent or sub-agent); it is the turn's `credits`, and the session's `aiCredits` is their sum (or the larger `totalNanoAiu` of a `session.usage_checkpoint`). An older CLI that logged no usage records leaves it `null` (unknown, not zero). BYOK calls (`isByok`) count 0: the user's own provider bills them. `cost` and `totalPremiumRequests`, the premium request multiplier of calls the user started, predate GitHub's switch to AI credits and are ignored.
+- **Prompts**: `user.message` `content`, except a prompt the agent sent a sub-agent (`source: "agent-…"`) and autopilot continuations (`source: "autopilot"`, `isAutopilotContinuation`). **Replies** come from `assistant.message`; the tool calls an assistant message asks for follow its usage record, so they belong to that turn.
+- **Tools**: `tool.execution_start` (name, arguments: command, path, pattern, url, question…) and `tool.execution_complete` (`success: false` with `error.message` is a failure). `bash` commands are classified like Claude's and `git commit` counts; `edit` / `create` paths are the files changed. `task` starts a sub-agent (`subagent.started` counts them).
+- **Title and folder**: `workspace.yaml` `name` (Copilot names the session) and `cwd`.
+- **Live**: a session directory holds `inuse.<pid>.lock` while a copilot process has it open; it is live when that pid is a running `copilot` process (`copilotPids`, one `ps -A`). Its state (`copilotLiveState`): *needs you* while a `permission.requested` has no `permission.completed`, or an `ask_user` call has no result; *working* when `open-sessions-state.json` says `working` (or, without it, activity in the last 30 s); else *your turn* with the start of the last reply.
+- **Quota** (`quota`): every `model.model_call_success` event carries the account's `quotaSnapshots`. `premium_interactions` (named after premium requests, it counts AI credits now) gives `entitlementRequests`, `usedRequests`, `remainingPercentage` and `resetDate`, the first of next month. Only the file's last such line is parsed. The entitlement can change within a month (plan change), so only the latest reading is used.
+- **Not available yet**: context-quality score, ghosts, file-history diffs, `/insights` fields, incidents (so no recommendations), the context and cache verdict. `copilot --resume <id>` is the resume command.
 
 ## 4. Pricing and models (`scripts/models.mjs`)
 
@@ -150,53 +166,35 @@ Costs are API-equivalent estimates; they are not what a subscription plan bills.
 
 ---
 
-## 5. Usage limits and the 5-hour window
+## 5. Plan usage and the 5-hour window
 
-Claude Code exposes the real limits (`rate_limits.five_hour` / `seven_day`, as in `/usage`) only in the JSON it pipes to the status line command. Everything in this section is about Claude's limits: Codex sessions are left out of the 5h window, the burn tracker and the spike analysis (`FleetDashboard`). So:
+Each provider reports its plan usage per account, in its own place, and [`scripts/provider-limits.mjs`](scripts/provider-limits.mjs) puts them in one shape for `/api/limits` (`{ claude, codex, copilot }`, null for a provider with nothing to read):
+
+- **Claude Code**: the 5h and weekly windows, only in the JSON it pipes to the status line command (steps 1–4 below).
+- **Codex**: the same two windows, in every rollout's `token_count` events (§3). `codexLimits` takes the freshest reading among all rollouts and places each window by its length (a 300-minute one is the 5h window, one over a day the weekly), so a plan with a weekly limit only has no 5h window. `capturedAt` is the time of that request.
+- **Copilot CLI**: the monthly quota of AI credits, in every session's `model.model_call_success` events (§3). `copilotLimits` turns the freshest reading into a `month` window: `usedPct` from `usedRequests / entitlementRequests` (past 100 is overage), with `used` and `entitlement`. Null on an unlimited plan.
+
+A window whose reset time has passed since the reading starts over at 0% with an unknown reset. Codex's and Copilot's readings are as fresh as the last request made with them on this machine (the cards say how old); use from other machines, IDEs or the web shows up with the next one.
+
+The burn tracker and the spike analysis only follow Claude's 5h window. For Claude Code:
 
 1. `/marey:limits` runs [`scripts/install-statusline.mjs`](scripts/install-statusline.mjs): copies [`scripts/statusline.mjs`](scripts/statusline.mjs) to `~/.claude/marey/statusline.mjs` (stable path across plugin updates), saves the current `statusLine` to `statusline.json`, and points `settings.json` at the wrapper.
 2. On every status line refresh the wrapper writes `limits.json`, then pipes the untouched payload to the user's previous status line command, or prints a minimal `model · 5h n% · 7d n%` line if there was none.
-3. The same command shows the limits in the other CLIs' own status lines ([`scripts/host-limits.mjs`](scripts/host-limits.mjs)). Neither can run a wrapper for this: Codex's status line is a list of built-in items with no custom command, and Copilot CLI's `statusLine.command` payload has no limits. So Codex's `[tui] status_line` gets `context-used`, `five-hour-limit` and `weekly-limit` after the model item (its defaults are written out first when the user never picked items; the TOML is edited line by line, and a `tui` set as a dotted key or inline table is left alone with a hint to use `/statusline`; a status line set up by an earlier version that added only the limits gets `context-used` too, and `--uninstall` still restores the user's original line), and Copilot CLI gets `footer.showQuota` (`Plan: 370/5,000 (7% used)`). These limits stay in the terminal; the dashboard doesn't read them.
-4. `/api/limits` serves `readLimits()` merged into what the server already holds (`mergeLimits`); [`src/utils/rateLimits.ts`](src/utils/rateLimits.ts) polls it every 5 s (`useRateLimits`). Every running session's status line overwrites `limits.json` with its own last-known limits, so an idle session writes a lower %, a window that has already reset, or no 5h window, every few seconds. The merge keeps, per window, the later reset and within a window the higher %, and never lets a reading without an open window replace one that is still open.
+3. The same command shows the limits in the other CLIs' own status lines ([`scripts/host-limits.mjs`](scripts/host-limits.mjs)). Neither can run a wrapper for this: Codex's status line is a list of built-in items with no custom command, and Copilot CLI's `statusLine.command` payload has no limits. So Codex's `[tui] status_line` gets `context-used`, `five-hour-limit` and `weekly-limit` after the model item (its defaults are written out first when the user never picked items; the TOML is edited line by line, and a `tui` set as a dotted key or inline table is left alone with a hint to use `/statusline`; a status line set up by an earlier version that added only the limits gets `context-used` too, and `--uninstall` still restores the user's original line), and Copilot CLI gets `footer.showQuota` (`Plan: 370/5,000 (7% used)`). The dashboard reads those limits from the session files instead (above). Copilot CLI can run a status line command, and its 5-minute prompt cache is where a pause costs most, so when it has none, it gets [`scripts/copilot-statusline.mjs`](scripts/copilot-statusline.mjs) (copied with `context-advice.mjs` to `~/.claude/marey/`, `statusLine.refreshInterval` 30 s; one the user set is left alone, with a hint). Its payload (`session_id`, `transcript_path`, `context_window`, `cost`…) has no cache state, so the script reads the session's last main-thread `session.usage_record` from the end of `events.jsonl` (`cacheExpiresAt`, `cacheTtlSeconds`, cached tokens), prints the same `ctx │ cache` segment as Claude Code's wrapper and writes the same `live/<session_id>.json` snapshot, so the dashboard shows it on the session's row too. `--uninstall` removes it if it is still Marey's.
+4. `/api/limits` serves `readLimits()` merged into what the server already holds (`mergeLimits`) as `claude`; [`src/utils/rateLimits.ts`](src/utils/rateLimits.ts) polls it every 5 s (`useRateLimits`, one poll shared by every component). Every running session's status line overwrites `limits.json` with its own last-known limits, so an idle session writes a lower %, a window that has already reset, or no 5h window, every few seconds. The merge keeps, per window, the later reset and within a window the higher %, and never lets a reading without an open window replace one that is still open.
 
 ### Context and prompt-cache advice
 
-The same payload carries `context_window` (size, % used, last-turn usage) and `prompt_cache` (`warm`, `ttl`, `expires_at`, hit ratio, misses, `recache_tokens_if_cold`). [`scripts/context-advice.mjs`](scripts/context-advice.mjs) (pure, shared by the wrapper and the dashboard like `models.mjs`) turns it into a snapshot (`toSnapshot`) and a verdict (`adviseContext`): *keep going*, *wrap up before pausing*, *compact at the next break*, *compact now*, or *clear if the task is done*, each with its reasons. Thresholds are heuristics (`THRESHOLDS`): context ≥ 70% / 85% of the window; a cold cache matters from 40% of the window or 100k tokens to re-cache; a warm cache is "expiring" under 10 min. A cold cache is the case where `/compact` is no cheaper than a normal message (it re-reads everything at full price), so `/clear` is advised.
+The same payload carries `context_window` (size, % used, last-turn usage) and `prompt_cache` (`warm`, `ttl`, `expires_at`, hit ratio, misses, `recache_tokens_if_cold`). [`scripts/context-advice.mjs`](scripts/context-advice.mjs) (pure, shared by the wrapper and the dashboard like `models.mjs`) turns it into a snapshot (`toSnapshot`) and a verdict (`adviseContext`): *keep going*, *wrap up before pausing*, *compact at the next break*, *compact now*, or *clear if the task is done*, each with its reasons. Thresholds are heuristics (`THRESHOLDS`): context ≥ 70% / 85% of the window; a cold cache matters from 40% of the window or 100k tokens to re-cache; a warm cache is "expiring" under 10 min, or under a third of a shorter TTL (`expiringSoon`: 100 s for a 5-minute cache). A cold cache is the case where `/compact` is no cheaper than a normal message (it re-reads everything at full price), so `/clear` is advised.
 
 The wrapper appends a short segment to the status line (`ctx ━━━───── 33% │ cache warm 59m`, colored by level, plus a hint when it matters). The dashboard polls `/api/live-context` once (`useLiveContext`, a shared store) and shows the result where the session is: a third line on session rows in the list (`ContextLine`: fill bar, cache countdown computed from `expires_at`, the verdict when it is not "keep going"; rows with it are taller, which the virtualized list accounts for) and figures in the session view's title row, right of the title and left of its primary action (`SessionContext` / `ContextSummary` in `ContextCard.tsx`: a small ring, used / window, cache countdown, and the verdict pill, which opens its reasons, the cold-start cost and the snapshot's age in a popover, also in its tooltip).
 
-The 5h window in the UI (`fleet/FiveHourSession.tsx`, `utils/fleetStats.ts`):
+The 5h window in the UI (`utils/planUsage.ts`, `fleet/FiveHourSession.tsx`):
 
-- With real limits: window start = `resetsAt − 5h`; the used % is real. The start is also saved as the local anchor, so a moment without limits continues the same window.
-- Without: the window is inferred locally. The first turn after the previous window expired anchors a new window, persisted in `localStorage` (`marey:window-start`, `utils/windowState.ts`), and the reset time is marked as estimated.
-- Either way, shares are of the window's API value (`windowBreakdown`'s `weigh`; tokens only when nothing in it is priced), so the ranking never depends on whether the limits were read.
+- With a reported reset: window start = `resetsAt − 5h` (weekly: `resetsAt − 7d`; Copilot's month: the first of the month that `resetDate` ends); the used % is real. Claude's start is also saved as the local anchor, so a moment without limits continues the same window.
+- Without: the 5h window is inferred locally (`inferWindowStart`): walking forward over the last day's turns, each one after the previous window ended starts a new one. Claude's is persisted in `localStorage` (`marey:window-start`, `utils/windowState.ts`), and the reset time is marked as estimated.
+- **Share of a limit per session** (`planUsage`): providers report the % per account, never per session, so each window is split between the sessions active in it by what they used there: API value for Codex (tokens when nothing is priced), the same for Claude Code but with cache reads at a tenth of their price (`READ_WEIGHT`: fitting %-points per unit of use on `limits-history.jsonl` put reads at 0–25% of their price, while they are ~45% of the API value of long-context sessions; tentative, on 17 hours of data), and AI credits for Copilot CLI, which is exactly what its quota counts. A session's points of the limit are its share times the used % (Copilot: its credits over the entitlement). The rest of the used % is ended sessions and use from elsewhere. The Now page draws the running sessions' points as colored slices of each bar (`sessionColors`, one palette per provider so slices in a card never share a color) and lists them on the sessions board (`runningUsage`).
 - `utils/burnTracker.ts` samples the real 5h % every 5 s (1 h buffer) and raises a spike banner when it climbs 4+ points within 5 minutes (critical at 10). It is inactive until limits are connected. `SpikeAnalysisOverlay` + `SpikeHeuristics` explain the spike from sessions, prompts and tools in that interval.
-
-### Badges (`scripts/badges.mjs`)
-
-Computed server-side after every parse (`updateBadges` in the API), because they need full sessions (`shell`, `timeline`, `turns`) that the list payload omits. `App` fetches `/api/badges` whenever the session list changes (`useBadges`) and hands it to the header, the Now page and the Progress page.
-
-- **Only Claude Code sessions count**: Codex tools and models don't map onto the families (Editor, Researcher, model tourist…), and unlocks are permanent. The level's XP ignores Codex too, since it is banked for good and Codex sessions have no context score; only the current streak (below) is overall activity and counts every agent.
-- **Only sessions started after the first launch count** (`badges.json` `startedAt`). History stays in every other view; badges start from zero so they feel earned and don't depend on how much transcript history Claude Code kept (`cleanupPeriodDays`).
-- **Unlocks are permanent**: stored with their date, so they survive transcript cleanup and 30-day windows sliding past them.
-- **Families**: one metric per family, tiers only raise the target, so a lower tier can never be harder than a higher one. Some families have 2 or 3 tiers; `oneshot` starts at gold.
-- **Tier names and cards**: each tier has its own name (`tierNames`, sent as `name` on each tier: Marathon goes 5K, 10K, Half marathon, Marathon), while unlock keys stay `<family>:<tier>`. The Progress page shows one foil card per family (`Badges.tsx`, `badges.css`) with the best tier's name and glyph, or the first tier's face down while locked. The finish is the only tier signal on the card (matte bronze, silver and gold sheen, holographic platinum), and the glyph develops a little at each tier (`BadgeGlyph.tsx`, one drawing per tier on a 32 grid, the family's emoji as fallback). Hovering only tilts the card; a click (or Enter / Space) brings it forward in a focus view (`BadgeFocus`, a modal dialog): the card large and still live, floating on the dimmed page, and beside it one panel with its tier ladder with targets and unlock dates, progress toward the next tier, the hint and whether it adds XP. Arrow keys page through the badges.
-- **Calibration**: per-session records (Marathon, Orchestrator, File surgeon, Toolbox, Juggler) by rarity across real sessions; cumulative counters by time for a heavy user: bronze on day 1, silver in 1–2 weeks, gold in ~3 months, platinum in ~1 year.
-- **Continuous work**: Marathon, Juggler and Hours use stretches of main-thread activity (turns and prompts) where no pause exceeds 15 minutes (`RUN_GAP_MS`), not `durationMs`, which accumulates capped gaps over sessions left open for days. Hours counts the union of stretches, so parallel sessions count once.
-- **Streak** skips quiet Saturdays and Sundays.
-- **Next up**: families flagged `nudge` reward good practice (tests, lint, commits, PRs, plan mode, cache, context hygiene, outcomes). Only they are suggested as the next goal, the locked tier closest to its target (`nextUp` in `utils/gamify.ts`), and only they add XP. Volume and spend families (Orchestrator, Juggler, Veteran…) still unlock but are never pushed and earn no XP. Streak isn't flagged: its badge is the best run since the first launch, which would contradict the current streak shown next to it.
-- **Context hygiene** only counts ended sessions: a live session scores high early and falls as its context grows.
-
-### Level, XP and streak (also `scripts/badges.mjs`, in the `/api/badges` payload)
-
-- **XP rewards how sessions were run, never spend.** Per session: 5+ main-thread turns +1, a commit +3, tests +2, lint / typecheck / build +2, context score 90+ +1, so 9 at most. On real history nearly every session reaches 5 turns and a score of 90, so shipping and checks are weighted to make most of the XP. A good-practice badge adds 5 / 15 / 40 / 100 for its first to fourth tier when it unlocks, whatever the tier's color: One-shot, which starts at gold, earns 5 then 15 (`xp` on each tier in the payload). Like badges, only Claude Code sessions earn it; unlike badges, every session counts, including ones from before the first launch, so a new user starts at a real level.
-- **XP is banked**: `badges.json` `xp` keeps each session's best score, so the level never drops when Claude Code deletes old transcripts, a session falls back to its `/insights` meta or its process crashes. A live session banks what can only go up (turns, commit, tests, lint); its context point stays provisional until it ends, since the score falls as the context grows. Ghosts earn nothing.
-- **Level** n starts at 4 × (n − 1)² XP: a few levels on day one, then one every week or two for a heavy user (a heavy user with months of history opens around level 25). Titles change at levels 5, 10, 15, 20, 25, 30, 40 and 50.
-- **Today** is the XP of the sessions worked in since local midnight (whenever they started) plus badges unlocked today.
-- **Current streak** uses the badge streak's rule over all non-ghost sessions: quiet weekends are skipped, a quiet weekday ends it. A quiet weekday *today* doesn't end it yet; it is `atRisk` (the flame dims in the header and the Now page says "not yet today").
-- **Moments** (`utils/progress.ts`, `useProgressEvents`): `localStorage` `marey:progress` holds the unlocks already announced, the unlocks already seen on the Progress page and the highest level announced. A new unlock or level-up raises an achievement toast (several unlocks at once share one); unlocks not yet seen count on the Progress tab and are flagged "new" there. The first run records the current state silently; a payload without a level (before the first parse) is ignored; nothing is announced while the tab is hidden, so a background tab doesn't use up a toast. Toasts pause while hovered, focused or hidden. The header chip shows "+N XP" for a moment whenever XP grows while the dashboard is open.
-- `sniper` and `comeback` need `/insights` facets; `hygiene` needs scored sessions (5+ turns). They are hidden (`available: false`) when no session has that data.
-- The shell-based families only see commands run by Claude, not ones typed in another terminal.
 
 ### Context quality (`scripts/quality.mjs`)
 
@@ -214,7 +212,7 @@ Grades: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, else F. The list payload keeps t
 
 ### Health check (`src/utils/healthRules.ts`)
 
-The **Health** tab is a checklist of rules over the sessions in the selected range (ghosts excluded, except for the housekeeping rule). Each rule passes, warns or fails against a threshold written next to it, explains why it matters and what to do, and links up to 5 sessions behind a miss. Rules without data (for example outcomes before `/insights` ran) show as n/a and don't count. The checklist heading shows the result (`passed / total`), and the Health tab of the header counts the rules that warn or fail.
+The **Health** tab is a checklist of rules over the sessions in the selected range (ghosts excluded, except for the housekeeping rule). Each rule passes, warns or fails against a threshold written next to it, explains why it matters and what to do, and links up to 5 sessions behind a miss. Rules without data (for example outcomes before `/insights` ran) show as n/a and don't count. The checklist heading shows the result (`passed / total`).
 
 Rules: context quality, context headroom, compactions, prompt cache, startup cost (median first-turn context: system prompt, CLAUDE.md, memory, skills and MCP tools; this rule and the cache rule only count Claude Code sessions, the others need data Codex sessions don't have), outcomes, friction, forgotten sessions (process running over 24h, from the pid file's `startedAt`) and housekeeping (ghosts). Adding one means appending a function to `RULES`.
 
@@ -248,8 +246,7 @@ Shared by the production server and the Vite dev server, so both expose the same
 | POST | `/api/sessions/:id/focus` | Bring the terminal running a live Claude Code session to the front (see below). Returns `{ app, exact }`. | UUID check; POST only; 409 unless the session is live with a pid; 501 off macOS. |
 | GET | `/api/file-history/:id/:hash@v:n` | Raw snapshot from `file-history/`. | id and file name regex-validated (no path traversal). |
 | GET | `/api/recommendations` | Recommendation cards and `coverage` from the last parse (§5). | `no-store`. |
-| GET | `/api/badges` | Badge families with per-tier progress and unlock dates, level and XP, current streak (§5). | `no-store`. |
-| GET | `/api/limits` | `readLimits()` or `null`. | `no-store`. |
+| GET | `/api/limits` | `{ claude, codex, copilot }`: each provider's plan usage or `null` (§5). | `no-store`. |
 | GET | `/api/live-context` | `readLiveContext()`: context / prompt-cache snapshots per session, newest first. | `no-store`. |
 | GET | `/api/report-status` | Whether `usage-data/report.html` exists, and its mtime. | `no-store`. |
 | POST | `/api/ghost/:id/reveal` | Reveal the transcript in the OS file manager (`open -R`, `explorer /select`, `xdg-open` on the folder). | UUID check; POST only. |
@@ -296,41 +293,42 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 
 ### State and routing (`App.tsx`)
 
-- Page (`now` / `sessions` / `usage` / `health` / `badges`, the last labeled "Progress", see `utils/pages.ts`), selected session, range (`today` / `7d` / `30d` / `all`), list filter (`all`, `live`, `ghost`, `friction`, `failed`, `lowquality`), project and search are mirrored to the URL hash (`#<page>?range=…&filter=…&project=…&q=…`, or `#session/<id>?…` while a session is open; Now has no path) and to `localStorage` (`marey:state`).
-- **Scope.** Sessions, Usage and Health follow the range and filters and show the scope bar and the headline tiles (`StatsRow`); Now and Progress ignore them and say so in their headings. The table sort (`utils/sortSessions.ts`) also orders ↑ / ↓ in the session view.
+- Page (`now` / `sessions` / `usage` / `health`, see `utils/pages.ts`), selected session, range (`today` / `7d` / `30d` / `all`), list filter (`all`, `live`, `ghost`, `friction`, `failed`, `lowquality`), project and search are mirrored to the URL hash (`#<page>?range=…&filter=…&project=…&q=…`, or `#session/<id>?…` while a session is open; Now has no path) and to `localStorage` (`marey:state`).
+- **Scope.** Sessions, Usage and Health follow the range and filters and show the scope bar and the headline tiles (`StatsRow`); Now ignores them. On Usage, the current 5h window comes first and is not scoped either; the tiles sit with the scoped charts below it. The table sort (`utils/sortSessions.ts`) also orders ↑ / ↓ in the session view.
 - The detail view merges the list summary with the fetched full session.
-- Keyboard: `1`–`5` (Now, Sessions, Usage, Health, Progress), `j`/`k` or arrows (next/previous session while one is open), `Esc` (close), `?` (help).
+- Keyboard: `1`–`4` (Now, Sessions, Usage, Health), `j`/`k` or arrows (next/previous session while one is open), `Esc` (close), `?` (help).
 
 ### Components
 
 | Component | Role |
 |---|---|
-| `AppHeader` | Brand, page navigation (sessions that need you on Now, also in the browser tab title; session count on Sessions, failing checks on Health, unseen unlocks on Progress), `LimitsPill` (opens the 5h window), `ParseErrors`, `ProfileMenu`. |
-| `ScopeBar` / `SessionFilters` | Range, project and status pickers (counts from the range, before filtering; ghosts split by crashed / empty in the tooltip; Claude Code / Codex when both are present), search, the resulting count and a reset. Clicking a project in the sessions table filters on it. |
+| `AppHeader` | Brand, provider switcher, page navigation (sessions that need you on Now, also in the browser tab title; session count on Sessions), `LimitsPill` (opens Now), `ParseErrors`, `ProfileMenu`. |
+| `ScopeBar` / `SessionFilters` | Range, project and status pickers (counts from the range, before filtering; ghosts split by crashed / empty in the tooltip), search, the resulting count and a reset. Clicking a project in the sessions table filters on it. |
 | `Kpi` / `KpiRow` | The one headline-tile style (label, value, context line), used by `StatsRow`, the session view and the 5h window. Up to six tiles share a row. |
-| `LimitsPill` | The 5h and 7-day usage windows (fill, elapsed-time tick, reset countdown); rendered in the top bar, where a click opens the 5h window panel (`WindowMenu`), and in the session view so they are always on screen. |
-| `units` (`utils/units.ts`, `UnitSetting`) | Display unit for usage: **tokens** (fresh = input + output + cache writes; cached reads are shown apart) or **API value** ($ at API prices, read as a relative weight, since a subscription is limited by the 5h / 7d windows rather than dollars). Persisted in `localStorage` (`marey:unit`), set from the profile menu. Rankings by weight (podium "Heaviest", project league) use API value. The podium "Longest" ranks by `longestRunMs` (longest main-thread stretch with no pause over 15 min), not `durationMs`, which adds up to 5 min per gap and so favors sessions left open for days. |
-| `ParseErrors` / `ProfileMenu` | Top-bar badge listing unreadable session-meta files with a Trash action (only shown when there are some). Profile chip (data status dot, level, XP bar, streak, dimmed when at risk; "+N XP" when XP comes in) opening a menu: level progress and today's XP (opens Progress), Health link, usage unit, data status and insights report, `LimitsSection`, keyboard shortcuts, bug report link. |
-| `Recommendations` | The cards from `/api/recommendations` (`utils/recommendations.ts`): kind, title, sessions and when it was last seen, what happens, denied commands, the action ("Copy a prompt for Claude", "Copy the line", docs), and folded details (mechanism, latest error, the sessions behind it). "Done" / "Not relevant" hide a card in `localStorage` (`marey:recs-dismissed`) until its count grows. Health shows them all; Now shows three as one-line rows, or nothing when there are none. |
+| `LimitsPill` | Plan usage always on screen (fill, elapsed-time tick): in the top bar, each selected provider's fullest window, a click opening Now; in the session view, every window of the session's provider. |
+| `PlanCard` | One provider's plan on the Now page: each window's % used (5h and week, or the month of AI credits with used / included), reset time, elapsed-time tick, and the bar split into the running sessions' slices (a click opens the session) and the rest; how fresh the reading is; today's tokens, AI credits and API value; "What used it" opens Usage. Without limits it says how to get them, and splits the bar by the window's use instead. |
+| `SessionBoard` | Every running session grouped by its live state (Needs you, longest wait first; Your turn; Working), each with its color swatch, name, project and provider, the question / plan / call or the start of its last reply, its share of the limit (`of 5h`, or `of month` for Copilot CLI; tooltip with tokens, API value or credits), how long, and "Open terminal" for Claude Code. |
+| `units` (`utils/units.ts`, `UnitSetting`) | Display unit for usage: **tokens** (fresh = input + output + cache writes; cached reads are shown apart) or **API value** ($ at API prices, read as a relative weight, since a subscription is limited by the 5h / 7d windows rather than dollars). Persisted in `localStorage` (`marey:unit`), set from the profile menu. The project league ranks by API value. |
+| `ParseErrors` / `ProfileMenu` | Top-bar badge listing unreadable session-meta files with a Trash action (only shown when there are some). Settings button (data status dot) opening a menu: insights report, usage unit, data status, `LimitsSection` (where each provider's limits come from), keyboard shortcuts, bug report link. |
+| `Recommendations` | The cards from `/api/recommendations` (`utils/recommendations.ts`): kind, title, sessions and when it was last seen, what happens, denied commands, the action ("Copy a prompt for Claude", "Copy the line", docs), and folded details (mechanism, latest error, the sessions behind it). "Done" / "Not relevant" hide a card in `localStorage` (`marey:recs-dismissed`) until its count grows. Health shows them all. |
 | `StatsStrip` (`StatsRow`) | Headline tiles of the scope: sessions, active time, API value, fresh tokens. |
-| `SessionList` | The sessions table: status glyph (live, ghost, cleared, or an outcome dot filled as far as the goal was met), goal, project, flags (open-terminal chip on live Claude Code rows on macOS, Codex tag, friction, plugin capture), usage, active time, start; sortable headers; day headers when sorted by date; virtualized. Also renders the short lists of the Now page, and `BulkGhostBar`. |
+| `SessionList` | The sessions table: status glyph (live, ghost, cleared, or an outcome dot filled as far as the goal was met), goal, project, flags (open-terminal chip on live Claude Code rows on macOS, Codex or Copilot tag, friction, plugin capture), usage, active time, start; sortable headers; day headers when sorted by date; virtualized. Also renders the short lists of the Now page, and `BulkGhostBar`. |
 | `SessionCompare` | Side-by-side metrics for selected sessions. |
 | `SessionDetail` | Full-screen overlay: header (a meta line with project, model, date, outcome and quality; the goal as title, with the summary as a two-line subtitle (`GoalSummary`, "more" for the rest) unless it only repeats the title; on the title's first line, the context / cache figures and verdict, then "Open terminal" on a live Claude Code session on macOS, else "Copy resume command"; export), cleared-chain / ghost banners (reveal, delete), and five tabs, each answering one question, with figures in one unit per block (the usage unit where a block shows one weight) and "API value" as the only name for $: **Overview**, how the session went in one screen (`SessionOverview`: four headline tiles that open their tab: active time and peak context → Timeline, fresh tokens or API value → Tokens, tool calls with failures and sub-agents → Tools; the Prompts chart, one bar per prompt in the usage unit, coloured by its costliest kind, a bar opening a card with its share in the same unit (`utils/promptShare.ts`) and links to its tool calls and to Tokens › By prompt; on the right, Frictions with their approximate time and a link to the Timeline, then Top tools → Tools, API value by kind → Tokens › By kind, Files → Files), **Timeline**, what happened when (`SessionTimeline`, data from `src/utils/sessionTimeline.ts`: context fill per main-thread turn against a 200k or 1M window, compactions detected as a drop below half of the previous context, cumulative API value, fresh tokens per turn, prompts and every tool call, sub-agent ones tinted, failures in red; frictions drawn at their fraction of the chart, approximate (`utils/frictionTimes.ts`); idle gaps over 5 minutes are shortened; clicking a prompt focuses the Tools tab on it; then the Prompts list: time, kind, the calls each led to, its text), **Tools**, what Claude did (every call, newest first, with its result; a call that started a sub-agent opens onto the sub-agent's calls; All / Failed; can be focused on one prompt; a By tool card beside them. One helper counts calls for the tab, the tiles, the Timeline and the prompts: `utils/toolCalls.ts`), **Tokens**, where the tokens and their API value went (headline tiles, By kind: tokens and API value per kind, By prompt: each prompt's fresh tokens, API value, share, costliest kind and idle cache rewrite, a row opening its tokens and API value per kind, cache-write split and per-turn table), **Files**, what changed (file-history versions with diffs via `diff`, then the commits from its `git commit` calls). |
 | `HelpOverlay` | Keyboard shortcuts, the table glyphs, glossary, data sources. |
-| `Toaster` | Error toasts (`toastError`) and achievement toasts (`toastAchievement`: tier-colored, with a View action). |
+| `Toaster` | Error toasts (`toastError`). |
 
 `pages/` (one question each) compose `fleet/`:
-- **Now**: what needs you, ignoring the range and filters. The first three recommendations as one-line rows (§5), then `SessionBoard`: every running session grouped by its live state (Needs you, longest wait first; Your turn; Working), each with its name, project, the question / plan / call or the start of its last reply, how long, and "Open terminal"; the latest sessions when none runs. The Codex view keeps a Today block (no limits pill). The 5h window opens from the limits pill as a panel under it, like a menu bar item (`WindowMenu` / `WindowPanel`: `FiveHourSession`, current 5h window with limit used, reset and API value as tiles, then `WindowConsumers`, and `LiveTicker`; closes on an outside click or Escape).
+- **Now**: how much of each plan is used and which running session uses it, ignoring the range and filters. One `PlanCard` per selected provider, then `SessionBoard` with the same colors; the latest sessions when none runs.
 - **Sessions**: the table, and `SessionCompare` beside it in compare mode (up to 3), or `BulkGhostBar` when the ghost filter is on.
-- **Usage**: `TokenTimeSeries`, then `ProjectRollup`, `ModelMix` and `ToolsHeatmap` side by side, then `HeavyPrompts`.
+- **Usage**: the current 5h window of Claude Code and Codex (`FiveHourSession`: limit used, reset and API value as tiles, then `WindowConsumers`), not scoped; then, in the scope, the headline tiles, `TokenTimeSeries`, `ProjectRollup`, `ModelMix` and `ToolsHeatmap` side by side, then `HeavyPrompts`.
 - **Health**: `HealthCheck` (rule checklist, score in its heading), `AnomalyFlags`.
-- **Progress** (page id `badges`, key 5): level, next level, today's XP and streak, the XP rules, **Next up** (six), `Badges` (foil cards, unseen unlocks flagged "new"), then `TopSessions` as all-time records (podium; a gold glint runs around the #1 card's frame, CSS only).
 
 `WindowConsumers` says what used the window: one bar split by project (filled to the used 5h % when the limits are connected, so the full bar is the limit) with its legend, then the five heaviest sessions and prompts. Every share is of the window's API value (tokens when nothing is priced), and a prompt started before the window only counts its turns inside it. Rows keep the order shown last time unless one overtakes another by more than 1% of the window (`useStickyRank`, `utils/stickyRank.ts`), so near ties don't swap on every poll; equal weights break on the id. When one of three or more sessions takes three quarters, an amber "one session is using N%" line says so. While the window is idle the same card shows today's consumers. Data from `utils/windowBreakdown.ts` (`windowBreakdown(sessions, from, to)`). Project colors follow the session list, and a clash in the card takes the next free color.
 
 `BurnSpikeBanner` (+ `SpikeAnalysisOverlay`, `SpikeHeuristics`) shows above any page.
 
-`utils/`: `fleetStats` (window/bucket aggregations, costs via `models.mjs`), `aggregateByPrompt`, `classifyPrompt`, `burnTracker`, `rateLimits`, `windowState`, `range`, `format`, `exportSession` (standalone HTML export of a session).
+`utils/`: `planUsage` (plan windows and each session's share), `fleetStats` (window/bucket aggregations, costs via `models.mjs`), `aggregateByPrompt`, `classifyPrompt`, `burnTracker`, `rateLimits`, `windowState`, `range`, `format`, `planFormat`, `projectLeague`, `exportSession` (standalone HTML export of a session).
 
 ---
 
@@ -354,7 +352,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 | `pnpm serve` | `node scripts/serve.mjs` (default port 3333; `--port`, `--no-open`). Also the `marey` bin. If the port is taken by an older Marey or ccblackbox server (`/api/version` older or missing, recognized by its command line and page title; `scripts/takeover.mjs`), it stops that server and takes the port; if the same or a newer version runs there, it opens it and exits. On start it also refreshes an installed status line wrapper whose copy differs from this version. It takes the port before the first parse, so the browser opens at once: data routes wait for that parse (the dashboard shows its loading screen), while `/api/version`, `/api/update` and `/api/limits` answer right away. |
 | `pnpm parse` | One-off parse to `~/.claude/marey/sessions.json`. |
 | `pnpm lint`, `pnpm typecheck` | ESLint, `tsc -b --noEmit`. |
-| `pnpm seed:demo` | Writes synthetic data to `.demo-claude/` and `.demo-codex/` (`scripts/seed-demo.mjs`). |
+| `pnpm seed:demo` | Writes synthetic data to `.demo-claude/`, `.demo-codex/` and `.demo-copilot/` (`scripts/seed-demo.mjs`). |
 
 - `dist/` is committed (`!dist/` in `.gitignore`); rebuild and commit it with UI changes.
 - npm `files`: `dist` (minus `sessions.json`), `scripts`, `hooks`, `commands`, `.claude-plugin`, `.codex-plugin`, `codex-skills`, `ARCHITECTURE.md`. Runtime dependencies are only needed for the bundle; the server uses the Node standard library. Node ≥ 20.
@@ -364,13 +362,13 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 ## 11. Known limitations
 
 - **Live detection needs `ps`.** `isClaudePidAlive` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
-- **Codex limits are not shown.** Codex reports its own 5h / weekly windows in `token_count.rate_limits`; the limits pill only shows Claude's.
+- **Codex and Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one.
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
 - **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call).
 - **Opening a terminal is macOS only and exact in Ghostty only.** Other apps (iTerm2, Terminal, VS Code…) are only brought to the front; a session inside tmux, zellij or screen is refused.
 - **`/clear` chains are heuristic.** They are linked by identical `custom-title` in the same project/cwd.
 - **Qualitative fields depend on `/insights`.** Without it, outcome is `unknown`, satisfaction defaults to 0.5, frictions are empty. Friction positions (`at`) are synthetic, not timestamps: the Timeline draws them at that fraction of its chart, marked approximate.
 - **Truncation.** Prompts, tool sequences (per transcript) and previews are capped.
-- **Costs are estimates** at public API prices; unknown models are priced at their family's latest model. The per-session share of the real 5h % is pro rata to cost, not Anthropic's actual weighting.
+- **Costs are estimates** at public API prices; unknown models are priced at their family's latest model. A session's share of a limit is pro rata to its API value in the window (Copilot: its AI credits), not the providers' actual weighting, which they don't report per session.
 - **Commits** are counted by matching `git commit` in Bash commands.
 - **Mock fallback.** An unreachable API shows bundled mock data; an empty `~/.claude` shows an empty dashboard.

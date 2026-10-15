@@ -1,100 +1,89 @@
-import type { Session } from "../types";
-import { LiveTicker } from "../components/fleet/LiveTicker";
+import { useMemo } from "react";
+import type { Agent, Session } from "../types";
 import { SessionList } from "../components/SessionList";
 import { SessionBoard } from "../components/SessionBoard";
+import { PlanCard } from "../components/PlanCard";
 import { PageSection } from "./PageSection";
-import { PROVIDER_LABELS, type Provider } from "../utils/providers";
+import { PROVIDER_LABELS, sessionProvider, type Provider } from "../utils/providers";
+import { planUsage, runningUsage, sessionColors } from "../utils/planUsage";
+import type { RateLimits } from "../utils/rateLimits";
+import { loadWindowStart } from "../utils/windowState";
 import { useNow } from "../utils/useNow";
-import { tokensInWindow } from "../utils/fleetStats";
-import { freshTokens } from "../utils/units";
-import { formatCost, formatTokens } from "../utils/format";
-import { KpiRow } from "../components/Kpi";
-import { Recommendations } from "../components/Recommendations";
-import type { RecommendationsPayload } from "../utils/recommendations";
 
 interface Props {
+  /** Every provider's sessions: each plan card reads its own. */
   allSessions: Session[];
   provider: Provider;
-  showClaude: boolean;
-  recommendations: RecommendationsPayload | null;
-  onOpenHealth: () => void;
+  providers: Agent[];
+  limits: RateLimits | null;
   onSelectSession: (id: string) => void;
   onShowAllSessions: () => void;
+  /** Opens the breakdown of a provider's current 5h window. */
+  onOpenWindow: (provider: Agent) => void;
 }
 
 const LATEST = 6;
 
 /**
- * What needs you: recommendations, then every running session by what it waits for. The 5h window
- * opens from the limits pill. Follows the provider; ignores the time range and session filters.
+ * Two questions: how much of each plan is used, and which running sessions use it. Each plan card
+ * splits its bars by running session, in the colors the sessions board uses. Follows the provider;
+ * ignores the time range and session filters.
  */
-export function NowPage({ allSessions, provider, showClaude, recommendations, onOpenHealth, onSelectSession, onShowAllSessions }: Props) {
-  const live = allSessions.filter((s) => s.live);
+export function NowPage({ allSessions, provider, providers, limits, onSelectSession, onShowAllSessions, onOpenWindow }: Props) {
+  const now = useNow(10_000);
+  const shown = provider === "all" ? providers : [provider];
+  const sessions = useMemo(
+    () => (provider === "all" ? allSessions : allSessions.filter((s) => sessionProvider(s) === provider)),
+    [allSessions, provider],
+  );
+  const plans = useMemo(
+    () => shown.map((p) => planUsage(p, allSessions.filter((s) => sessionProvider(s) === p), limits?.[p] ?? null, now, p === "claude" ? loadWindowStart() : null)),
+    // `shown` is derived from provider and providers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [provider, providers, allSessions, limits, now],
+  );
+  const colors = useMemo(() => sessionColors(sessions), [sessions]);
+  const usage = useMemo(() => runningUsage(plans), [plans]);
+  const live = sessions.filter((s) => s.live);
+  const several = shown.length > 1;
 
   return (
     <div className="page">
-      <Recommendations
-        data={recommendations}
-        onSelectSession={onSelectSession}
-        limit={3}
-        variant="list"
-        onSeeAll={onOpenHealth}
-        hideWhenEmpty
-        wrap={(list) => (
-          <PageSection
-            title="To fix"
-            note={`From your last ${recommendations?.windowDays ?? 30} days of sessions`}
-            aside={<button className="link-btn" onClick={onOpenHealth}>All recommendations →</button>}
-          >
-            {list}
-          </PageSection>
-        )}
-      />
+      <PageSection
+        title="Plan usage"
+        note={several ? "Each bar splits by running session, in the colors below" : `${PROVIDER_LABELS[shown[0]] ?? ""} · split by running session, in the colors below`}
+      >
+        <div className="plan-grid">
+          {plans.map((plan) => (
+            <PlanCard
+              key={plan.provider}
+              usage={plan}
+              colors={colors}
+              now={now}
+              onSelectSession={onSelectSession}
+              onDetails={plan.provider === "copilot" ? undefined : () => onOpenWindow(plan.provider)}
+            />
+          ))}
+        </div>
+      </PageSection>
 
       {live.length > 0 ? (
         <PageSection
-          title="Your sessions"
-          note={`${live.length} running · ${PROVIDER_LABELS[provider]}`}
+          title="Running now"
+          note={`${live.length} session${live.length > 1 ? "s" : ""}`}
           aside={<button className="link-btn" onClick={onShowAllSessions}>All sessions →</button>}
         >
-          <SessionBoard sessions={allSessions} onSelectSession={onSelectSession} />
+          <SessionBoard sessions={sessions} onSelectSession={onSelectSession} usage={usage} colors={colors} showProvider={several} />
         </PageSection>
       ) : (
         <PageSection
           title="Latest sessions"
-          note="No session running"
+          note="Nothing running"
           aside={<button className="link-btn" onClick={onShowAllSessions}>All sessions →</button>}
         >
-          <SessionList sessions={allSessions.slice(0, LATEST)} onSelect={onSelectSession} autoHeight />
+          <SessionList sessions={sessions.slice(0, LATEST)} onSelect={onSelectSession} autoHeight />
         </PageSection>
       )}
-
-      {/* Codex has no limits pill to open the 5h window from: its day stays here. */}
-      {!showClaude && (
-        <PageSection title="Today" note={PROVIDER_LABELS[provider]} aside={<LiveTicker sessions={allSessions} />}>
-          <TodayActivity sessions={allSessions} provider={provider} />
-        </PageSection>
-      )}
-    </div>
-  );
-}
-
-/** Codex activity is available even though Marey does not read its quota limits. */
-function TodayActivity({ sessions, provider }: { sessions: Session[]; provider: Provider }) {
-  const now = useNow(5000);
-  const usage = tokensInWindow(sessions, new Date(now).setHours(0, 0, 0, 0), now);
-  return (
-    <div className="fleet-block">
-      <div className="section-title">
-        <span>{PROVIDER_LABELS[provider]} · Today</span>
-        <span className="dim">Since midnight</span>
-      </div>
-      <KpiRow items={[
-        { label: "Live sessions", value: sessions.filter((s) => s.live).length, sub: "running now" },
-        { label: "Fresh tokens", value: formatTokens(freshTokens(usage.tokens)), sub: "today" },
-        { label: "API value", value: formatCost(usage.cost), sub: "today", title: "Equivalent API value, not a bill" },
-      ]} />
-      {provider === "codex" && <p className="dim provider-note">Codex usage limits are not available in Marey. Activity is calculated from your sessions.</p>}
     </div>
   );
 }

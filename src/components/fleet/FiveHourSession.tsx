@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Session } from "../../types";
-import { firstEventAfter, FIVE_HOUR_MS, resolveWindowStartMs } from "../../utils/fleetStats";
+import type { Agent, Session } from "../../types";
+import { FIVE_HOUR_MS } from "../../utils/fleetStats";
 import { windowBreakdown } from "../../utils/windowBreakdown";
 import { loadWindowStart, saveWindowStart } from "../../utils/windowState";
 import { formatCost, formatTokens } from "../../utils/format";
-import type { RateLimits } from "../../utils/rateLimits";
+import type { LimitWindow } from "../../utils/rateLimits";
+import { inferWindowStart } from "../../utils/planUsage";
+import { PROVIDER_LABELS } from "../../utils/providers";
 import { KpiRow, type KpiItem } from "../Kpi";
 import { WindowConsumers } from "./WindowConsumers";
 
 interface Props {
+  /** Claude Code or Codex: both have a 5h window. */
+  provider: Agent;
+  /** That provider's sessions. */
   sessions: Session[];
-  limits: RateLimits | null;
+  /** The 5h window the provider reported, if any. */
+  limit: LimitWindow | null;
   onSelectSession: (id: string) => void;
 }
 
@@ -31,14 +37,17 @@ function formatLeft(ms: number): string {
  * The current 5h window, in reading order: how much of the limit is used and when it resets,
  * then what is using it. While the window is idle, today's biggest consumers.
  */
-export function FiveHourSession({ sessions, limits, onSelectSession }: Props) {
+export function FiveHourSession({ provider, sessions, limit, onSelectSession }: Props) {
   const [now, setNow] = useState(() => Date.now());
-  const [windowStart, setWindowStart] = useState<number | null>(() => loadWindowStart());
+  // Only Claude Code keeps an anchor: its status line may be missing for a while; Codex logs its window with each request.
+  const keepsAnchor = provider === "claude";
+  const [windowStart, setWindowStart] = useState<number | null>(() => (keepsAnchor ? loadWindowStart() : null));
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(id);
   }, []);
   useEffect(() => {
+    if (!keepsAnchor) return;
     const onWindow = () => setWindowStart(loadWindowStart());
     window.addEventListener("marey:window-changed", onWindow);
     window.addEventListener("storage", onWindow);
@@ -46,31 +55,32 @@ export function FiveHourSession({ sessions, limits, onSelectSession }: Props) {
       window.removeEventListener("marey:window-changed", onWindow);
       window.removeEventListener("storage", onWindow);
     };
-  }, []);
-  // Exact window when Claude Code reported the reset time (status line wrapper).
-  const realStart = limits?.fiveHour?.resetsAt ? limits.fiveHour.resetsAt - FIVE_HOUR_MS : null;
+  }, [keepsAnchor]);
+  // Exact window when the provider reported the reset time (Claude Code's status line, Codex's rollouts).
+  const realStart = limit?.resetsAt ? limit.resetsAt - FIVE_HOUR_MS : null;
 
   // With real limits, keep the local anchor on the real window: a poll without them then
   // continues it instead of jumping to an inferred one. Without: persist an inferred anchor
   // as soon as a new message arrives after the previous window expired (or none was set yet).
   useEffect(() => {
+    if (!keepsAnchor) return;
     if (realStart !== null) {
       if (realStart !== windowStart) saveWindowStart(realStart);
       return;
     }
     if (windowStart && now < windowStart + FIVE_HOUR_MS) return;
-    const lastExpiry = windowStart ? windowStart + FIVE_HOUR_MS : 0;
-    const fresh = firstEventAfter(sessions, lastExpiry, now);
+    const fresh = inferWindowStart(sessions, now, windowStart);
     if (fresh !== null && fresh !== windowStart) {
       saveWindowStart(fresh);
     }
-  }, [realStart, windowStart, sessions, now]);
+  }, [keepsAnchor, realStart, windowStart, sessions, now]);
 
   const fromMs = useMemo(
-    () => realStart ?? resolveWindowStartMs(sessions, windowStart, now),
+    () => realStart ?? inferWindowStart(sessions, now, windowStart),
     [realStart, sessions, windowStart, now],
   );
-  const pct = limits?.fiveHour ? limits.fiveHour.usedPct / 100 : null;
+  const pct = limit ? limit.usedPct / 100 : null;
+  const title = `${PROVIDER_LABELS[provider]} · Current 5h window`;
   const data = useMemo(() => (fromMs !== null ? windowBreakdown(sessions, fromMs, now) : null), [sessions, fromMs, now]);
   const active = fromMs !== null && data !== null && data.total.tokens > 0;
   // While the window is idle, the consumers fall back to today so the page still says what used most.
@@ -84,8 +94,8 @@ export function FiveHourSession({ sessions, limits, onSelectSession }: Props) {
     return (
       <div className="fleet-block five-hour-session five-hour-idle">
         <div className="section-title">
-          <span>Claude Code · Current 5h window</span>
-          <span className="dim">{fromMs === null ? "Idle · waiting for the first message" : "Idle · no Claude Code activity in the last 5h"}</span>
+          <span>{title}</span>
+          <span className="dim">{fromMs === null ? "Idle · waiting for the first message" : `Idle · no ${PROVIDER_LABELS[provider]} activity in the last 5h`}</span>
         </div>
         {today && <WindowConsumers key="today" data={today} scope="today" limitPct={null} onSelectSession={onSelectSession} />}
       </div>
@@ -105,14 +115,14 @@ export function FiveHourSession({ sessions, limits, onSelectSession }: Props) {
       : {
           label: "Limit used",
           value: "—",
-          sub: "not connected",
-          title: "Run /marey:limits in Claude Code to connect your real 5h and 7-day limits",
+          sub: provider === "claude" ? "not connected" : "not in its sessions yet",
+          title: provider === "claude" ? "Run /marey:limits in Claude Code to connect your real 5h and 7-day limits" : undefined,
         },
     {
       label: "Resets in",
       value: formatLeft(endMs - now),
       sub: `at ${formatClock(endMs)}${estimated ? " · estimated" : ""}`,
-      title: estimated ? "Estimated from your first message after the previous window: the limits are not connected" : undefined,
+      title: estimated ? "Estimated from your first message after the previous window: no reset time was reported" : undefined,
     },
     {
       label: "API value",
@@ -125,7 +135,7 @@ export function FiveHourSession({ sessions, limits, onSelectSession }: Props) {
   return (
     <div className="fleet-block five-hour-session">
       <div className="section-title">
-        <span>Claude Code · Current 5h window</span>
+        <span>{title}</span>
         <span className="dim tabular">{formatClock(fromMs)} – {formatClock(endMs)}</span>
       </div>
       <KpiRow items={tiles} />

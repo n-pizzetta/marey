@@ -1,5 +1,5 @@
 /**
- * Marey's own files (limits, live context, badges, tool cache, model overrides) live in
+ * Marey's own files (limits, live context, tool cache, model overrides) live in
  * <claude config dir>/marey/. Before the rename they were in ccblackbox/: the first call
  * moves that folder and leaves a symlink at the old path, so a status line wrapper or an
  * older plugin version that still points there keeps writing to the same place.

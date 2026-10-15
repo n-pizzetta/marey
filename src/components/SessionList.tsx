@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "../types";
 import { formatCost, formatDuration, formatRelative, formatTokens, outcomeColor, outcomeLabel } from "../utils/format";
+import { formatCredits } from "../utils/planFormat";
 import { projectColor } from "../utils/fleetStats";
 import { PRODUCT_NAME } from "../utils/brand";
 import { API_VALUE_HINT, freshTokens, formatUsage, useUnit } from "../utils/units";
@@ -269,6 +270,9 @@ export function SessionList({
                       {s.agent === "codex" && (
                         <span className="agent-tag" title="Codex session (~/.codex)">codex</span>
                       )}
+                      {s.agent === "copilot" && (
+                        <span className="agent-tag" title="Copilot CLI session (~/.copilot)">copilot</span>
+                      )}
                       {s.frictions.length > 0 && (
                         <span className="friction-chip" title={`${s.frictions.length} friction point${s.frictions.length > 1 ? "s" : ""} (/insights)`}>
                           △<span className="tabular">{s.frictions.length}</span>
@@ -280,7 +284,7 @@ export function SessionList({
                     </span>
                     <span
                       className={`st-num mono tabular st-usage ${unit === "usd" ? "is-usd" : ""}`}
-                      title={`${formatTokens(freshTokens(s.tokens))} fresh tokens · ${formatCost(s.costUsd)} API value`}
+                      title={`${formatTokens(freshTokens(s.tokens))} fresh tokens · ${formatCost(s.costUsd)} API value${s.agent === "copilot" && s.aiCredits != null ? `\n${formatCredits(s.aiCredits)} AI credits: what Copilot CLI's quota counts, cached reads included` : ""}`}
                     >
                       {formatUsage(unit, s.tokens, s.costUsd)}
                     </span>

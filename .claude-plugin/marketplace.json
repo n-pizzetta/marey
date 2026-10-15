@@ -1,7 +1,7 @@
 {
   "name": "marey",
   "metadata": {
-    "description": "Visual debugger and analytics dashboard for Claude Code and Codex sessions"
+    "description": "Dashboard for Claude Code, Codex and Copilot CLI sessions: plan usage, running sessions and replay"
   },
   "owner": {
     "name": "Nathan Pizzetta",
@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "marey",
-      "description": "Replay turns, inspect tool calls and file diffs, track tokens/cost, and surface friction patterns across your fleet.",
+      "description": "See how much of each plan you have used and which running session uses it; replay turns, tool calls and file diffs.",
       "source": "./",
       "category": "productivity"
     }

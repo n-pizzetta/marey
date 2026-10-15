@@ -19,9 +19,21 @@ export const THRESHOLDS = {
   /** A cold cache matters from this % of the window or from this many tokens to re-cache (windows can be 1M). */
   coldMatters: 40,
   coldTokens: 100_000,
-  /** Seconds left on a warm cache under which a pause is risky. */
+  /** Seconds left on a warm cache under which a pause is risky (a third of a shorter TTL: `expiringSoon()`). */
   expiringSoon: 600,
 };
+
+const TTL_UNIT = { s: 1, m: 60, h: 3600 };
+
+/**
+ * Seconds left under which a warm cache is "expiring": 10 min, or a third of a shorter TTL, so a
+ * 5-minute cache (Copilot CLI's, or Claude's 5m one) isn't always about to expire.
+ */
+export function expiringSoon(ttl) {
+  const m = /^(\d+)(s|m|h)$/.exec(typeof ttl === "string" ? ttl.trim() : "");
+  const secs = m ? Number(m[1]) * TTL_UNIT[m[2]] : null;
+  return secs ? Math.min(THRESHOLDS.expiringSoon, secs / 3) : THRESHOLDS.expiringSoon;
+}
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
@@ -123,7 +135,7 @@ export function adviseContext(snap, now = Date.now()) {
       reasons.push("Cache is cold, but the context is small: re-caching it is cheap.");
     }
   } else if (state === "warm") {
-    if (secsLeft !== null && secsLeft < THRESHOLDS.expiringSoon && coldMatters) {
+    if (secsLeft !== null && secsLeft < expiringSoon(c?.ttl) && coldMatters) {
       signals.push({ verdict: "wrap_up", level: "watch" });
       reasons.push(`Cache expires in ${fmtLeft(secsLeft)}: if you pause past that, the next message re-caches ${recache ? `~${fmtTok(recache)} tokens` : "the whole context"}.`);
     }
@@ -179,7 +191,7 @@ export function statusSegment(snap, now = Date.now()) {
   }
   if (a.cache.state === "warm") {
     const left = a.cache.secsLeft;
-    const color = left !== null && left < THRESHOLDS.expiringSoon ? C.yellow : C.green;
+    const color = left !== null && left < expiringSoon(a.cache.ttl) ? C.yellow : C.green;
     groups.push(`cache ${paint(color, left !== null ? `warm ${fmtLeft(left)}` : "warm")}`);
   } else if (a.cache.state === "cold") {
     groups.push(`cache ${paint(a.verdict === "clear" ? C.red : C.yellow, "cold")}`);

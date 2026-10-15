@@ -13,25 +13,19 @@ import { NowPage } from "./pages/NowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { HealthPage } from "./pages/HealthPage";
-import { BadgesPage } from "./pages/BadgesPage";
 import { loadSessions, loadSessionDetail } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
 import { useRecommendations } from "./utils/recommendations";
 import { PRODUCT_NAME } from "./utils/brand";
 import { needsYouCount } from "./utils/liveState";
-import { WindowPanel } from "./components/WindowMenu";
 import type { Range } from "./utils/range";
 import { filterByRange, scopeToRange } from "./utils/range";
 import { registerProjects } from "./utils/fleetStats";
-import { healthReport } from "./utils/healthRules";
 import { useRateLimits } from "./utils/rateLimits";
 import { useBurnTracker, type Spike } from "./utils/burnTracker";
 import { useUnit } from "./utils/units";
 import { NAV_PAGES, PAGE_IDS, SCOPED_PAGES, type Page } from "./utils/pages";
-import { useBadges } from "./utils/gamify";
-import { useProgressEvents } from "./utils/progress";
-import "./gamify.css";
 import "./App.css";
 import "./shell.css";
 import "./detail.css";
@@ -149,14 +143,11 @@ function App() {
     () => provider === "all" ? allSessions : allSessions.filter((s) => sessionProvider(s) === provider),
     [allSessions, provider],
   );
-  const showClaude = provider !== "codex" && providers.includes("claude");
-  /** Sessions that count against the Claude usage limits: 5h window, burn rate, spikes. Codex has its own. */
-  const limitSessions = useMemo(() => allSessions.filter((s) => s.agent !== "codex"), [allSessions]);
-  const burn = useBurnTracker(limitSessions, limits);
-  // Refetched after each parse; announces unlocks and level-ups wherever the user is.
-  const claudeBadges = useBadges(allSessions);
-  const badges = showClaude ? claudeBadges : null;
-  // Claude Code only for now: Codex rollouts expose no incidents yet.
+  const showClaude = (provider === "all" || provider === "claude") && providers.includes("claude");
+  /** Sessions that count against the Claude usage limits: burn rate and spikes. */
+  const claudeSessions = useMemo(() => allSessions.filter((s) => sessionProvider(s) === "claude"), [allSessions]);
+  const burn = useBurnTracker(claudeSessions, limits);
+  // Claude Code only for now: Codex and Copilot sessions expose no incidents yet.
   const allRecommendations = useRecommendations(generatedAt);
   const recommendations = showClaude ? allRecommendations : null;
   const needsYou = useMemo(() => needsYouCount(providerSessions), [providerSessions]);
@@ -164,12 +155,6 @@ function App() {
   useEffect(() => {
     document.title = needsYou > 0 ? `(${needsYou}) ${PRODUCT_NAME}` : PRODUCT_NAME;
   }, [needsYou]);
-  const openProgress = () => {
-    setSelectedIdInternal(null);
-    setPage("badges");
-  };
-  // Not while loading: the Toaster isn't mounted yet, so announcements would be lost.
-  const progress = useProgressEvents(source === "loading" ? null : badges, openProgress);
 
   useEffect(() => {
     // The choice, not the resolved provider: a Claude-only history must not pin "claude" once Codex shows up.
@@ -270,10 +255,6 @@ function App() {
   const filtered = useMemo(() => sortSessions(unsorted, sort, unit), [unsorted, sort, unit]);
   // Aggregates only count what was spent inside the range (per turn).
   const scopedFiltered = useMemo(() => scopeToRange(filtered, range), [filtered, range]);
-  const healthIssues = useMemo(
-    () => healthReport(scopedFiltered, providerSessions).rules.filter((r) => r.status === "fail" || r.status === "warn").length,
-    [scopedFiltered, providerSessions],
-  );
   const activeFilterCount = (filter !== "all" ? 1 : 0) + (projectFilter ? 1 : 0) + (search ? 1 : 0);
 
   const selectedSummary: Session | null = selectedId
@@ -353,7 +334,7 @@ function App() {
       <div className="app">
         <div className="loading-screen">
           <BrandMark size={44} />
-          <div className="mono dim" style={{ marginTop: 14 }}>Reading Claude Code and Codex sessions…</div>
+          <div className="mono dim" style={{ marginTop: 14 }}>Reading Claude Code, Codex and Copilot CLI sessions…</div>
         </div>
       </div>
     );
@@ -371,19 +352,7 @@ function App() {
         onProviderChange={changeProvider}
         showClaude={showClaude}
         needsYou={needsYou}
-        windowPanel={(close) => (
-          <WindowPanel
-            limitSessions={limitSessions}
-            sessions={providerSessions}
-            limits={limits}
-            onSelectSession={(id) => { close(); setSelectedId(id); }}
-          />
-        )}
         sessionCount={filtered.length}
-        healthIssues={healthIssues}
-        unseenUnlocks={page === "badges" ? 0 : progress.unseen.size}
-        level={badges?.level ?? null}
-        streak={badges?.streak ?? null}
         source={source}
         generatedAt={generatedAt}
         reportStatus={reportStatus}
@@ -413,7 +382,7 @@ function App() {
             onDismiss={burn.dismissSpike}
           />
         )}
-        {scoped && (
+        {scoped && page !== "usage" && (
           <StatsRow
             sessions={scopedFiltered}
             totalInRange={inRange.length}
@@ -423,13 +392,13 @@ function App() {
         )}
         {page === "now" && (
           <NowPage
-            allSessions={providerSessions}
+            allSessions={allSessions}
             provider={provider}
-            showClaude={showClaude}
-            recommendations={recommendations}
-            onOpenHealth={() => setPage("health")}
+            providers={providers}
+            limits={limits}
             onSelectSession={setSelectedId}
             onShowAllSessions={() => setPage("sessions")}
+            onOpenWindow={() => setPage("usage")}
           />
         )}
         {page === "sessions" && (
@@ -485,26 +454,25 @@ function App() {
           />
         )}
         {page === "usage" && (
-          <UsagePage sessions={scopedFiltered} allSessions={providerSessions} range={range} onSelectSession={setSelectedId} />
+          <UsagePage
+            sessions={scopedFiltered}
+            allSessions={providerSessions}
+            everySession={allSessions}
+            windowProviders={(provider === "all" ? providers : [provider]).filter((p) => p !== "copilot")}
+            limits={limits}
+            range={range}
+            stats={<StatsRow sessions={scopedFiltered} totalInRange={inRange.length} range={range} activeFilterCount={activeFilterCount} />}
+            onSelectSession={setSelectedId}
+          />
         )}
         {page === "health" && (
           <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} onSelectSession={setSelectedId} />
-        )}
-        {page === "badges" && (
-          <BadgesPage
-            allSessions={providerSessions}
-            provider={provider}
-            badges={badges}
-            unseen={progress.unseen}
-            onViewed={progress.markViewed}
-            onSelectSession={setSelectedId}
-          />
         )}
       </main>
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay
           spike={analysisSpike}
-          sessions={scopedFiltered.filter((s) => s.agent !== "codex")}
+          sessions={scopedFiltered.filter((s) => sessionProvider(s) === "claude")}
           onClose={() => setAnalysisSpike(null)}
           onSelectSession={(id) => {
             setAnalysisSpike(null);

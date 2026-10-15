@@ -10,16 +10,18 @@ const root = mkdtempSync(join(tmpdir(), "marey-test-"));
 const CLAUDE = join(root, ".claude");
 const PROJECTS = join(CLAUDE, "projects");
 const CODEX = join(root, ".codex");
+const COPILOT = join(root, ".copilot");
 
 let parsed;
 let claude;
 let codex;
 
 before(async () => {
-  execFileSync(process.execPath, ["scripts/seed-demo.mjs", CLAUDE, CODEX], { stdio: "ignore" });
-  // The parser resolves CLAUDE_CONFIG_DIR and CODEX_HOME at import time.
+  execFileSync(process.execPath, ["scripts/seed-demo.mjs", CLAUDE, CODEX, COPILOT], { stdio: "ignore" });
+  // The parser resolves CLAUDE_CONFIG_DIR, CODEX_HOME and COPILOT_HOME at import time.
   process.env.CLAUDE_CONFIG_DIR = CLAUDE;
   process.env.CODEX_HOME = CODEX;
+  process.env.COPILOT_HOME = COPILOT;
   const { parseAllSessions } = await import("../scripts/parse-sessions.mjs");
   parsed = await parseAllSessions();
   claude = parsed.sessions.filter((s) => s.agent === "claude");
@@ -91,7 +93,7 @@ test("returns an empty result when there is no Claude data", async () => {
   const out = execFileSync(
     process.execPath,
     ["--input-type=module", "-e", 'const m = await import("./scripts/parse-sessions.mjs"); console.log(JSON.stringify(await m.parseAllSessions()))'],
-    { env: { ...process.env, CLAUDE_CONFIG_DIR: empty, CODEX_HOME: join(root, "empty-codex") } },
+    { env: { ...process.env, CLAUDE_CONFIG_DIR: empty, CODEX_HOME: join(root, "empty-codex"), COPILOT_HOME: join(root, "empty-copilot") } },
   );
   const result = JSON.parse(out);
   assert.deepEqual(result.sessions, []);
@@ -268,18 +270,6 @@ test("prices Codex's internal models like GPT, flagged as estimates", async () =
   const id = normalizeModel("codex-auto-review");
   assert.equal(isKnownModel(id), false);
   assert.deepEqual(priceFor(id), priceFor("gpt-5.4"));
-});
-
-test("leaves Codex sessions out of badges", async () => {
-  const { computeBadges } = await import("../scripts/badges.mjs");
-  const state = () => ({ version: 1, startedAt: new Date(0).toISOString(), unlocked: {} });
-  const now = Date.now();
-  assert.ok(codex.length > 0);
-  const all = computeBadges(parsed.sessions, state(), now);
-  const claudeOnly = computeBadges(claude, state(), now);
-  // Badges and the level's XP ignore Codex; only the streak is overall activity and counts every agent.
-  assert.deepEqual(all.families, claudeOnly.families);
-  assert.deepEqual(all.level, claudeOnly.level);
 });
 
 test("prices every seeded Codex model", () => {

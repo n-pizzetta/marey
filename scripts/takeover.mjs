@@ -75,8 +75,10 @@ export async function stopServer(pid, port, timeoutMs = 4000) {
 export function refreshStatusline(dir, scriptsDir) {
   if (!existsSync(join(dir, "statusline.mjs"))) return false;
   let changed = false;
-  for (const name of ["statusline.mjs", "context-advice.mjs"]) {
+  for (const name of ["statusline.mjs", "context-advice.mjs", "copilot-statusline.mjs"]) {
     const target = join(dir, name);
+    // Copilot CLI's status line is only there when /marey:limits could set it.
+    if (name === "copilot-statusline.mjs" && !existsSync(target)) continue;
     try {
       const source = readFileSync(join(scriptsDir, name), "utf8");
       if (existsSync(target) && readFileSync(target, "utf8") === source) continue;

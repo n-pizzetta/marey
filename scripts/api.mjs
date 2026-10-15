@@ -14,11 +14,11 @@ import { createHash } from "node:crypto";
 import { promises as fsp, watch, existsSync, readFileSync, statSync, createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { mergeLimits, parseAllSessions, readLimits, readLiveContext, summarizeSession } from "./parse-sessions.mjs";
-import { badgeStatePath, computeBadges, loadBadgeState, saveBadgeState } from "./badges.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
 import { buildRecommendations } from "./recommendations.mjs";
+import { codexLimits, copilotLimits } from "./provider-limits.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -31,7 +31,6 @@ const FILE_HISTORY = join(CLAUDE, "file-history");
 const META_DIR = join(CLAUDE, "usage-data", "session-meta");
 const META_TRASH = join(META_DIR, ".trash");
 const REPORT_HTML = join(CLAUDE, "usage-data", "report.html");
-const BADGES_FILE = badgeStatePath(CLAUDE);
 
 const SESSION_ID_RE = /^[a-f0-9-]{36}$/i;
 const FILE_NAME_RE = /^[a-f0-9]+@v\d+$/;
@@ -53,25 +52,12 @@ const cache = {
   sessions: [],
   byId: new Map(),
   errors: [],
-  badges: null,
   recommendations: null,
-  /** Freshest usage limits read so far (`mergeLimits`): limits.json flips between sessions. */
+  /** Freshest Claude Code usage limits read so far (`mergeLimits`): limits.json flips between sessions. */
   limits: null,
+  /** Freshest Codex limits and Copilot quota logged in their sessions (provider-limits.mjs). */
+  readings: { codex: null, copilot: null },
 };
-
-let badgeState = null;
-
-/** Recomputes badges after a parse; the first call creates badges.json (first launch). */
-async function updateBadges(sessions) {
-  try {
-    badgeState ??= await loadBadgeState(BADGES_FILE);
-    const { changed, ...badges } = computeBadges(sessions, badgeState);
-    if (changed) await saveBadgeState(BADGES_FILE, badgeState);
-    cache.badges = badges;
-  } catch (err) {
-    console.error("[marey] badges error:", err);
-  }
-}
 
 async function runParser() {
   if (parsing) {
@@ -81,13 +67,13 @@ async function runParser() {
   parsing = true;
   try {
     const t0 = Date.now();
-    const { sessions, errors, modelOverrides } = await parseAllSessions();
+    const { sessions, errors, modelOverrides, readings } = await parseAllSessions();
     cache.generatedAt = new Date().toISOString();
     cache.modelOverrides = modelOverrides;
     cache.sessions = sessions;
     cache.byId = new Map(sessions.map((s) => [s.id, s]));
     cache.errors = errors;
-    await updateBadges(sessions);
+    cache.readings = readings;
     try { cache.recommendations = buildRecommendations(sessions); } catch (err) { console.error("[marey] recommendations error:", err); }
     // Serialize the list once per parse; the ETag lets polling clients get a 304.
     const list = JSON.stringify({ sessions: sessions.map(summarizeSession), errors, models: modelOverrides ?? {} });
@@ -326,11 +312,6 @@ async function handleApi(req, res) {
     return sendJson(res, 200, cache.recommendations ?? { generatedAt: null, windowDays: 30, cards: [], coverage: null });
   }
 
-  if (url === "/api/badges") {
-    res.setHeader("cache-control", "no-store");
-    return sendJson(res, 200, cache.badges ?? { startedAt: null, total: 0, families: [] });
-  }
-
   // The daily update check (scripts/update-check.mjs), for the dashboard's update notice.
   if (url === "/api/update") {
     res.setHeader("cache-control", "no-store");
@@ -342,10 +323,16 @@ async function handleApi(req, res) {
     return sendJson(res, 200, { name: "marey", version: VERSION, pid: process.pid });
   }
 
+  // Plan usage per provider: Claude Code from its status line, Codex and Copilot CLI from their sessions.
   if (url === "/api/limits") {
     res.setHeader("cache-control", "no-store");
     cache.limits = mergeLimits(cache.limits, await readLimits());
-    return sendJson(res, 200, cache.limits);
+    const now = Date.now();
+    return sendJson(res, 200, {
+      claude: cache.limits,
+      codex: codexLimits(cache.readings.codex, now),
+      copilot: copilotLimits(cache.readings.copilot, now),
+    });
   }
 
   if (url === "/api/live-context") {

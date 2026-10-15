@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import type { Level, Streak } from "../utils/gamify";
 import { PRODUCT_NAME } from "../utils/brand";
 import { keepFocus } from "../utils/keepFocus";
 import { NAV_PAGES, type Page } from "../utils/pages";
@@ -10,7 +9,7 @@ import { UpdateNotice } from "./UpdateNotice";
 import type { Agent } from "../types";
 import type { Provider } from "../utils/providers";
 import { ProviderSwitcher } from "./ProviderSwitcher";
-import { WindowMenu } from "./WindowMenu";
+import { LimitsPill } from "./LimitsGauge";
 
 export interface ReportStatus {
   exists: boolean;
@@ -26,16 +25,8 @@ interface Props {
   showClaude: boolean;
   /** Running sessions waiting on the user, shown on the Now tab. */
   needsYou: number;
-  /** The panel the limits pill opens (the current 5h window); `close` hides it. */
-  windowPanel: (close: () => void) => ReactNode;
   /** Sessions in the scope, shown on the Sessions tab. */
   sessionCount: number;
-  /** Failing or warning health checks in the scope, shown on the Health tab. */
-  healthIssues: number;
-  /** Badge unlocks not seen on the Progress page yet. */
-  unseenUnlocks: number;
-  level: Level | null;
-  streak: Streak | null;
   source: "real" | "mock";
   generatedAt?: string;
   reportStatus: ReportStatus;
@@ -68,10 +59,9 @@ const NAV_ICONS: Record<Page, ReactNode> = {
     </>
   ),
   health: <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4" />,
-  badges: <path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5v1.5a3 3 0 0 0 3 3M16 6h3v1.5a3 3 0 0 1-3 3M12 13v4M8.5 20h7" />,
 };
 
-/** Brand, page navigation, usage limits and the profile menu: the one fixed bar of the app. */
+/** Brand, page navigation, plan usage and the settings menu: the one fixed bar of the app. */
 export function AppHeader({
   page,
   onPageChange,
@@ -80,12 +70,7 @@ export function AppHeader({
   onProviderChange,
   showClaude,
   needsYou,
-  windowPanel,
   sessionCount,
-  healthIssues,
-  unseenUnlocks,
-  level,
-  streak,
   source,
   generatedAt,
   reportStatus,
@@ -118,33 +103,21 @@ export function AppHeader({
               <span className="app-nav-count warn mono tabular" title={`${needsYou} session${needsYou > 1 ? "s" : ""} waiting for you`}>{needsYou}</span>
             )}
             {p.id === "sessions" && <span className="app-nav-count mono tabular">{sessionCount}</span>}
-            {p.id === "health" && healthIssues > 0 && (
-              <span className="app-nav-count warn mono tabular" title={`${healthIssues} check${healthIssues > 1 ? "s" : ""} to look at`}>
-                {healthIssues}
-              </span>
-            )}
-            {p.id === "badges" && unseenUnlocks > 0 && (
-              <span className="app-nav-count new mono tabular" title={`${unseenUnlocks} new badge${unseenUnlocks > 1 ? "s" : ""}`}>
-                {unseenUnlocks}
-              </span>
-            )}
           </button>
         ))}
       </nav>
 
       <div className="app-header-right">
         <UpdateNotice />
-        {showClaude && <WindowMenu>{windowPanel}</WindowMenu>}
+        <LimitsPill providers={provider === "all" ? providers : [provider]} compact onOpen={page === "now" ? undefined : () => onPageChange("now")} />
         {parseErrors && parseErrors.length > 0 && <ParseErrors errors={parseErrors} />}
         <ProfileMenu
-          level={level}
-          streak={streak}
           source={source}
           parsedAgo={formatAge(generatedAt)}
           reportStatus={reportStatus}
           showClaude={showClaude}
+          providers={providers}
           onHelp={onHelp}
-          onOpenPage={onPageChange}
         />
       </div>
     </header>
