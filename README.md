@@ -281,7 +281,7 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the parser internals, component m
 - *Open terminal* is macOS only. It picks the exact tab in Ghostty 1.3+ only, and not inside tmux, zellij or screen.
 - Test coverage is thin: only the parser has tests (`pnpm test`).
 - Codex and Copilot CLI sessions have no context-quality score, ghost detection, file-history diffs or `/insights` outcome (Claude Code only), and are kept out of the Claude-specific health rules and recommendations.
-- A session's share of a limit is an estimate: the providers report the % used per account, not per session. Marey splits it by each session's API value in the window (AI credits for Copilot CLI). Codex's and Copilot CLI's limits are as fresh as the last request made with them on this machine.
+- A session's share of a limit is an estimate: the providers report the % used per account, not per session. Marey splits it by each session's API value in the window (Claude Code: with cache reads at a tenth of their price, the closest fit to how its limits moved; Copilot CLI: AI credits). Codex's and Copilot CLI's limits are as fresh as the last request made with them on this machine.
 
 ---
 

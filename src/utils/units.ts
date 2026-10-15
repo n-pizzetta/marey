@@ -17,7 +17,10 @@ export const UNITS: Array<{ id: Unit; label: string; hint: string }> = [
 
 type TokenCounts = { input: number; output: number; cacheRead: number; cacheWrite: number };
 
-/** Tokens that actually weigh on the quota: everything except cached reads. */
+/**
+ * Tokens that weigh on Claude Code's limits: everything but cached reads, which count about a tenth
+ * there. Not on Copilot CLI's quota, which bills reads too: its sessions show their AI credits.
+ */
 export const freshTokens = (t: Pick<TokenCounts, "input" | "output" | "cacheWrite">): number => t.input + t.output + t.cacheWrite;
 
 export const API_VALUE_HINT = "API value: what this would cost at API prices, used as a relative weight. A subscription is limited by the 5h / 7d windows, not dollars.";

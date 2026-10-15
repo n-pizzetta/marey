@@ -1,4 +1,5 @@
 import type { Agent, Session } from "../types";
+import { priceFor } from "../../scripts/models.mjs";
 import { costOfTokens, FIVE_HOUR_MS, sumTokens } from "./fleetStats";
 import { SEVEN_DAY_MS, type LimitWindow, type ProviderLimits } from "./rateLimits";
 import { formatCost, formatTokens } from "./format";
@@ -10,8 +11,10 @@ export type PlanWindowKey = "fiveHour" | "sevenDay" | "month";
 export interface SessionShare {
   session: Session;
   tokens: number;
-  /** API value of those tokens: how the windows are split, as the limits weigh models and token kinds. */
+  /** API value of those tokens. */
   cost: number;
+  /** What splits a 5h or weekly window: API value, with Claude's cache reads at a tenth (`READ_WEIGHT`). */
+  weight: number;
   /** Copilot CLI: AI credits, what its quota counts. */
   credits: number;
   /** Share of what the window used that this session accounts for (0..1). */
@@ -35,7 +38,7 @@ export interface PlanWindow {
   entitlement?: number;
   /** Heaviest first. */
   shares: SessionShare[];
-  total: { tokens: number; cost: number; credits: number };
+  total: { tokens: number; cost: number; credits: number; weight: number };
 }
 
 export interface PlanUsage {
@@ -43,15 +46,23 @@ export interface PlanUsage {
   limits: ProviderLimits | null;
   /** The window to watch first: the 5h one, else the month. */
   windows: PlanWindow[];
-  today: { tokens: number; cost: number; credits: number };
+  today: { tokens: number; cost: number; credits: number; weight: number };
 }
 
 const DAY_MS = 86_400_000;
 
+/**
+ * How much of their API price cache reads weigh in a window's split. Claude Code's limits count
+ * them at roughly 0 to 25% of it (fit of %-points per unit of use on limits-history.jsonl,
+ * 2026-10-15, 17 h of data: tentative), while they are ~45% of the API value of long-context
+ * sessions. Codex keeps the full price: nothing measured yet. Copilot CLI splits by AI credits.
+ */
+const READ_WEIGHT: Record<Agent, number> = { claude: 0.1, codex: 1, copilot: 1 };
+
 /** What each session used in [fromMs, toMs], weighed like the provider's limit counts it. */
-function sharesIn(sessions: Session[], fromMs: number, toMs: number, weigh: "cost" | "credits") {
+function sharesIn(sessions: Session[], fromMs: number, toMs: number, weigh: "weight" | "credits", readWeight = 1) {
   const rows: Omit<SessionShare, "part" | "limitPct">[] = [];
-  const total = { tokens: 0, cost: 0, credits: 0 };
+  const total = { tokens: 0, cost: 0, credits: 0, weight: 0 };
   for (const s of sessions) {
     if (!s.turns?.length) continue;
     const startMs = Date.parse(s.startedAt);
@@ -60,20 +71,25 @@ function sharesIn(sessions: Session[], fromMs: number, toMs: number, weigh: "cos
     let tokens = 0;
     let cost = 0;
     let credits = 0;
+    let weight = 0;
     for (const t of s.turns) {
       const ts = startMs + t.t;
       if (ts < fromMs || ts > toMs) continue;
+      const model = t.model ?? s.model;
+      const c = costOfTokens(model, t.tokens);
       tokens += sumTokens(t.tokens);
-      cost += costOfTokens(t.model ?? s.model, t.tokens);
+      cost += c;
       credits += t.credits ?? 0;
+      weight += readWeight === 1 ? c : c - (1 - readWeight) * (t.tokens.cacheRead / 1e6) * priceFor(model).cacheRead;
     }
     if (tokens === 0) continue;
-    rows.push({ session: s, tokens, cost, credits });
+    rows.push({ session: s, tokens, cost, credits, weight });
     total.tokens += tokens;
     total.cost += cost;
     total.credits += credits;
+    total.weight += weight;
   }
-  const key: "credits" | "cost" | "tokens" = weigh === "credits" ? "credits" : total.cost > 0 ? "cost" : "tokens";
+  const key: "credits" | "weight" | "tokens" = weigh === "credits" ? "credits" : total.weight > 0 ? "weight" : "tokens";
   rows.sort((a, b) => b[key] - a[key] || (a.session.id < b.session.id ? -1 : 1));
   return { rows, total, key };
 }
@@ -107,6 +123,7 @@ export function monthStart(resetsAt: number | null, now: number): number {
 }
 
 function makeWindow(
+  provider: Agent,
   key: PlanWindowKey,
   sessions: Session[],
   limit: LimitWindow | null,
@@ -118,8 +135,8 @@ function makeWindow(
   const label = key === "fiveHour" ? "5h window" : key === "sevenDay" ? "Week" : "Month";
   const usedPct = limit?.usedPct ?? null;
   const base = { key, label, usedPct, resetsAt: limit?.resetsAt ?? null, fromMs, spanMs, estimated: false, ...extra };
-  if (fromMs === null) return { ...base, shares: [], total: { tokens: 0, cost: 0, credits: 0 } };
-  const { rows, total, key: weigh } = sharesIn(sessions, fromMs, now, key === "month" ? "credits" : "cost");
+  if (fromMs === null) return { ...base, shares: [], total: { tokens: 0, cost: 0, credits: 0, weight: 0 } };
+  const { rows, total, key: weigh } = sharesIn(sessions, fromMs, now, key === "month" ? "credits" : "weight", READ_WEIGHT[provider]);
   const of = weigh === "credits" ? (extra.used ?? total.credits) : total[weigh];
   const shares = rows.map((r) => {
     const part = of > 0 ? Math.min(1, r[weigh] / of) : 0;
@@ -139,16 +156,16 @@ export function planUsage(provider: Agent, sessions: Session[], limits: Provider
     const m = limits?.month ?? null;
     const fromMs = monthStart(m?.resetsAt ?? null, now);
     const spanMs = m?.resetsAt ? m.resetsAt - fromMs : 31 * DAY_MS;
-    windows.push(makeWindow("month", sessions, m, fromMs, spanMs, now, m ? { used: m.used, entitlement: m.entitlement } : {}));
+    windows.push(makeWindow(provider, "month", sessions, m, fromMs, spanMs, now, m ? { used: m.used, entitlement: m.entitlement } : {}));
   } else {
     const five = limits?.fiveHour ?? null;
     const fromMs = five?.resetsAt ? five.resetsAt - FIVE_HOUR_MS : inferWindowStart(sessions, now, five ? null : anchor);
-    windows.push(makeWindow("fiveHour", sessions, five, fromMs, FIVE_HOUR_MS, now, { estimated: !five?.resetsAt }));
+    windows.push(makeWindow(provider, "fiveHour", sessions, five, fromMs, FIVE_HOUR_MS, now, { estimated: !five?.resetsAt }));
     const week = limits?.sevenDay ?? null;
-    if (week) windows.push(makeWindow("sevenDay", sessions, week, week.resetsAt ? week.resetsAt - SEVEN_DAY_MS : null, SEVEN_DAY_MS, now));
+    if (week) windows.push(makeWindow(provider, "sevenDay", sessions, week, week.resetsAt ? week.resetsAt - SEVEN_DAY_MS : null, SEVEN_DAY_MS, now));
   }
   const midnight = new Date(now).setHours(0, 0, 0, 0);
-  const { total } = sharesIn(sessions, midnight, now, "cost");
+  const { total } = sharesIn(sessions, midnight, now, "weight");
   return { provider, limits, windows, today: total };
 }
 
