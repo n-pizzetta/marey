@@ -33,6 +33,45 @@ const LABELS = {
 const tokensOf = (chars) => Math.round(chars / 4);
 const clamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
 
+/** The context fill signal: 100 up to half the window, 0 at 95%. */
+function fillSignal(peak, window) {
+  const fillPct = (peak / window) * 100;
+  return {
+    kind: "context_fill",
+    score: clamp(fillPct <= 50 ? 100 : 100 - ((fillPct - 50) / 45) * 100),
+    detail: `Peak context ${Math.round(peak / 1000)}k of ${window / 1000}k (${Math.round(fillPct)}%)`,
+    wasteTokens: 0,
+    label: LABELS.context_fill,
+  };
+}
+
+/** Score, grade and fill band from the signals. */
+function summarize(signals, { peak, window, compactions }) {
+  const fillPct = (peak / window) * 100;
+  const score = signals.reduce((a, s) => a + s.score * WEIGHTS[s.kind], 0);
+  return {
+    score: Math.round(score * 10) / 10,
+    grade: score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F",
+    fillPct,
+    band: fillPct < 50 ? "healthy" : fillPct < 70 ? "watch" : fillPct < 85 ? "degrading" : "critical",
+    wasteTokens: signals.reduce((a, s) => a + s.wasteTokens, 0),
+    compactions,
+    peak,
+    window,
+    signals,
+  };
+}
+
+/**
+ * The quality re-scored against a known context window (the transcript has none: `finish` infers
+ * 200k unless the peak proves 1M). Unchanged when the window is the same, or smaller than the peak.
+ */
+export function withWindow(quality, window) {
+  if (!quality || !window || quality.window === window || !(quality.peak > 0) || quality.peak > window) return quality;
+  const signals = quality.signals.map((s) => (s.kind === "context_fill" ? fillSignal(quality.peak, window) : s));
+  return summarize(signals, { peak: quality.peak, window, compactions: quality.compactions });
+}
+
 /** Identity of a tool call for duplicate detection; null when it has no stable input. */
 function callKey(name, input) {
   if (typeof input.command === "string") return `${name}:${input.command}`;
@@ -104,17 +143,12 @@ export function createQualityTracker() {
         const ctx = t.tokens.input + t.tokens.cacheRead + t.tokens.cacheWrite;
         if (ctx > peak) peak = ctx;
       }
-      // The window isn't in the transcript: a context over 200k proves a 1M window.
+      // The window isn't in the transcript: a context over 200k proves a 1M window. The parser
+      // corrects it from the live snapshots when it can (withWindow).
       const window = peak > STANDARD_WINDOW ? LARGE_WINDOW : STANDARD_WINDOW;
-      const fillPct = (peak / window) * 100;
 
       const signals = [
-        {
-          kind: "context_fill",
-          score: clamp(fillPct <= 50 ? 100 : 100 - ((fillPct - 50) / 45) * 100),
-          detail: `Peak context ${Math.round(peak / 1000)}k of ${window / 1000}k (${Math.round(fillPct)}%)`,
-          wasteTokens: 0,
-        },
+        fillSignal(peak, window),
         {
           kind: "stale_reads",
           score: clamp(100 - count.stale_reads * 10),
@@ -141,16 +175,7 @@ export function createQualityTracker() {
         },
       ].map((s) => ({ ...s, label: LABELS[s.kind] }));
 
-      const score = signals.reduce((a, s) => a + s.score * WEIGHTS[s.kind], 0);
-      return {
-        score: Math.round(score * 10) / 10,
-        grade: score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F",
-        fillPct,
-        band: fillPct < 50 ? "healthy" : fillPct < 70 ? "watch" : fillPct < 85 ? "degrading" : "critical",
-        wasteTokens: signals.reduce((a, s) => a + s.wasteTokens, 0),
-        compactions,
-        signals,
-      };
+      return summarize(signals, { peak, window, compactions });
     },
   };
 }

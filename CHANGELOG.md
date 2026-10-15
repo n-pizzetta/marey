@@ -15,6 +15,10 @@ versioning follows [SemVer](https://semver.org/).
 - A Claude Code or Codex session's share of a limit says it is an estimate: those providers report one % per account, so use on the web or another machine is spread over this machine's sessions. The grey rest of their bars is this machine's ended sessions, not use from elsewhere as its tooltip said.
 - The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
 
+### Fixed
+
+- Claude Code sessions are read against their real context window. Transcripts don't say it (Opus 5.5 can run at 1M with no `[1m]` in its id), so a session that peaked under 200k was read against 200k: the session view said "98% of 200k" under a header saying "20% of 1M", and context quality and the Context headroom check were off. The window now comes from the session's status line snapshot, else the latest one of the same model.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

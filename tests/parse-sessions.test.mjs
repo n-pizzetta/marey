@@ -2,7 +2,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +22,10 @@ before(async () => {
   process.env.CLAUDE_CONFIG_DIR = CLAUDE;
   process.env.CODEX_HOME = CODEX;
   process.env.COPILOT_HOME = COPILOT;
+  // A status line snapshot of one Fable session: its model's window is 1M.
+  const fable = firstSessionOf("claude-fable-5-1");
+  mkdirSync(join(CLAUDE, "marey", "live"), { recursive: true });
+  writeFileSync(join(CLAUDE, "marey", "live", `${fable}.json`), JSON.stringify({ v: 1, sessionId: fable, capturedAt: Date.now(), model: "claude-fable-5-1", costUsd: null, context: { usedPct: 4, size: 1_000_000, tokens: 40_000 }, cache: null }));
   const { parseAllSessions } = await import("../scripts/parse-sessions.mjs");
   parsed = await parseAllSessions();
   claude = parsed.sessions.filter((s) => s.agent === "claude");
@@ -29,6 +33,16 @@ before(async () => {
 });
 
 after(() => rmSync(root, { recursive: true, force: true }));
+
+/** The id of the first seeded Claude session whose transcript uses `model`. */
+function firstSessionOf(model) {
+  for (const dir of readdirSync(PROJECTS)) {
+    for (const f of readdirSync(join(PROJECTS, dir)).filter((f) => f.endsWith(".jsonl"))) {
+      if (readFileSync(join(PROJECTS, dir, f), "utf8").includes(`"model":"${model}"`)) return f.replace(/\.jsonl$/, "");
+    }
+  }
+  throw new Error(`no ${model} session`);
+}
 
 /** Main transcript plus sub-agent transcripts of a session. */
 function transcriptsOf(id) {
@@ -296,4 +310,15 @@ test("recommends the seeded frictions", async () => {
   const { buildRecommendations } = await import("../scripts/recommendations.mjs");
   const ids = buildRecommendations(parsed.sessions).cards.map((c) => c.id);
   for (const id of ["cause:zsh-nomatch", "cause:playwright-profile", "denials", "waits"]) assert.ok(ids.includes(id), id);
+});
+
+test("takes the context window from the status line snapshots, for the session and its model", () => {
+  const fable = claude.filter((s) => s.model === "fable-5.1");
+  const others = claude.filter((s) => s.model !== "fable-5.1");
+  assert.ok(fable.length > 1 && others.length > 0);
+  for (const s of fable) {
+    assert.equal(s.contextWindow, 1_000_000, `session ${s.id}`);
+    if (s.quality) assert.equal(s.quality.window, 1_000_000);
+  }
+  for (const s of others) assert.equal(s.contextWindow, undefined, `session ${s.id}`);
 });
