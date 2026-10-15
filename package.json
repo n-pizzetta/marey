@@ -1,7 +1,7 @@
 {
   "name": "marey",
   "private": true,
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Dashboard for Claude Code, Codex and Copilot CLI sessions: plan usage, running sessions and replay",
   "keywords": [
     "claude-code",
