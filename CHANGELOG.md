@@ -12,6 +12,7 @@ versioning follows [SemVer](https://semver.org/).
 - Usage and Health: the range and filters head the section they drive (History, Checks), and stay on top while it scrolls, instead of the top of the page, where the current 5h window and the recommendations ignored them. Health loses the headline tiles.
 - Usage's tokens-over-time chart starts where the usage starts (not at midnight for Today), so the bars no longer sit squeezed on the right.
 - The settings menu is easier to read: the usage unit with what it means, one line for the data sources that lists only what needs a look and how to fix it, then the links. Its dot turns amber when a source needs a look.
+- A Claude Code or Codex session's share of a limit says it is an estimate: those providers report one % per account, so use on the web or another machine is spread over this machine's sessions. The grey rest of their bars is this machine's ended sessions, not use from elsewhere as its tooltip said.
 - The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
 
 ### Planned

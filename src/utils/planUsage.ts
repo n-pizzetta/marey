@@ -209,7 +209,10 @@ export function runningUsage(plans: PlanUsage[]): Map<string, RowUsage> {
         out.set(s.session.id, {
           value: pctText(s.limitPct),
           of: w.key === "month" ? "of month" : "of 5h",
-          title: `${pctText(s.limitPct)} of the ${w.key === "month" ? "monthly quota" : "5h limit"} · ${pctText(s.part * 100)} of what ${window} used\n${used}`,
+          title:
+            `${pctText(s.limitPct)} of the ${w.key === "month" ? "monthly quota" : "5h limit"} · ${pctText(s.part * 100)} of what ${window} used\n${used}` +
+            // Claude Code and Codex only report the % per account: it is split between this machine's sessions.
+            (w.key === "month" ? "" : "\nAn estimate: use on the web or on another machine also counts toward this machine's sessions."),
         });
       } else {
         out.set(s.session.id, { value: pctText(s.part * 100), of: w.key === "month" ? "of month" : "of window", title: `${pctText(s.part * 100)} of what ${window} used (limit not connected)\n${used}` });

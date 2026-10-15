@@ -138,7 +138,11 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
           <span
             className={`plan-bar-rest${pointed ? " off" : ""}`}
             style={{ width: `${rest}%`, background: known ? color : undefined }}
-            title={known ? "Sessions that are no longer running, and use from elsewhere (other machines, IDEs, the web)" : "Sessions that are no longer running"}
+            title={
+              w.key === "month"
+                ? "Sessions that are no longer running, and use from elsewhere (other machines, IDEs, the web)"
+                : "Sessions on this machine that are no longer running"
+            }
           />
         )}
         {elapsed !== null && <span className="plan-bar-pace" style={{ left: `${elapsed * 100}%` }} title={`${Math.round(elapsed * 100)}% of the ${w.label.toLowerCase()} elapsed`} />}
