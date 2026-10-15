@@ -1,6 +1,11 @@
 :root {
   /* graphite with a faint cool cast; surfaces step by tone, lines are light rings */
   --c-bg: #0c0d10;
+  /* the page backdrop: ambient light pools, so the glass has something to refract */
+  --bg-ambient:
+    radial-gradient(52% 70% at 8% -8%, rgba(94, 125, 166, 0.22), transparent 72%),
+    radial-gradient(40% 55% at 92% -4%, rgba(196, 160, 118, 0.1), transparent 70%),
+    var(--c-bg);
   --c-bg-panel: #17181d;
   --c-bg-elevated: #1f2026;
   --c-bg-hover: #26272e;
@@ -98,11 +103,7 @@ body {
   font-size: var(--fs-body);
   line-height: 1.5;
   overflow: hidden;
-  /* ambient light pools, so the glass has something to refract */
-  background:
-    radial-gradient(52% 70% at 8% -8%, rgba(94, 125, 166, 0.22), transparent 72%),
-    radial-gradient(40% 55% at 92% -4%, rgba(196, 160, 118, 0.1), transparent 70%),
-    var(--c-bg);
+  background: var(--bg-ambient);
 }
 #root { background: transparent; }
 

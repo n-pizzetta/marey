@@ -812,14 +812,14 @@
 }
 
 /* Usage and Health: the scope bar heads the section it drives, and stays on top while it scrolls.
-   Full width over the page's padding, frosted so the charts pass under it. */
+   Full width over the page's padding, on the page backdrop pinned to the window: it reads as part
+   of the header, like the Sessions bar, and the charts pass under it unseen. */
 .page-section > .scope-bar {
   position: sticky;
   top: calc(-1 * var(--page-gap));
   z-index: 3;
   margin-inline: calc(-1 * var(--pad-x));
   padding: 10px var(--pad-x);
-  background: color-mix(in srgb, var(--c-bg) 78%, transparent);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  backdrop-filter: blur(16px) saturate(140%);
+  background: var(--bg-ambient);
+  background-attachment: fixed;
 }

@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On Usage and Health, the scope bar no longer shows as a darker band under the header: it sits on
+  the page backdrop like the Sessions bar, and the charts no longer show through it when it sticks.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
