@@ -1,7 +1,7 @@
 {
   "name": "marey",
   "description": "Dashboard for Claude Code, Codex and Copilot CLI sessions: how much of each plan you have used and which running session uses it, plus replay, tool calls, file diffs and tokens/cost.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "author": {
     "name": "Nathan Pizzetta",
     "url": "https://github.com/n-pizzetta"
