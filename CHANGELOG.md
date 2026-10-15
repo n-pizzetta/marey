@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Planned
+
+- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
+- Sub-Agent Tree component.
+- Cross-Session Patterns component.
+- Delta vs `~/.claude/usage-data/report.html` view.
+- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
+  `reassignLiveToChainTail`, plugin-cache merge.
+- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
+  macOS/Linux).
+- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
+  with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.11.0] — 2026-10-15
+
 ### Added
 
 - **Context** page (5th tab): what agents have in mind at start and what they left on disk, for one
@@ -24,19 +39,6 @@ versioning follows [SemVer](https://semver.org/).
 - Copilot CLI gets its own provider color.
 - Demo data (`pnpm seed:demo`): instruction files loaded at start, a memory folder that grows and
   is re-read, and an Explore sub-agent.
-
-### Planned
-
-- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
-- Sub-Agent Tree component.
-- Cross-Session Patterns component.
-- Delta vs `~/.claude/usage-data/report.html` view.
-- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
-  `reassignLiveToChainTail`, plugin-cache merge.
-- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
-  macOS/Linux).
-- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
-  with mtime invalidation, so cold start doesn't re-parse the full set.
 
 ## [0.10.0] — 2026-10-15
 
