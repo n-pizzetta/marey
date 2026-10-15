@@ -8,12 +8,17 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const OUT = join(ROOT, ".readme-rec");
 mkdirSync(OUT, { recursive: true });
 const b = await chromium.launch({ channel: "chrome" });
-const d = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+// Tall enough for the sessions board, so the terminal can sit under it.
+const d = await b.newPage({ viewport: { width: 1440, height: 820 }, deviceScaleFactor: 2 });
 await d.goto("http://127.0.0.1:3344/"); await d.waitForTimeout(3500);
 await d.screenshot({ path: join(OUT, "dash.png") });
-const txt = await d.evaluate(() => document.body.innerText);
-const pct = Number(/ctx (\d+)%/.exec(txt)[1]);
-const reset = /58%\s+(\S+)/.exec(txt)[1];
+// The live session's context fill (livesim.mjs's snapshot) and Claude's 5h reset, as the dashboard has them.
+const { id } = JSON.parse(readFileSync(join(OUT, "live.out"), "utf8").split("\n")[0]);
+const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(ROOT, ".demo-claude");
+const pct = JSON.parse(readFileSync(join(CLAUDE, "marey", "live", `${id}.json`), "utf8")).context.usedPct;
+const { claude } = await (await fetch("http://127.0.0.1:3344/api/limits")).json();
+const mins = Math.max(1, Math.ceil((claude.fiveHour.resetsAt - Date.now()) / 60_000));
+const reset = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}`;
 const filled = Math.round(pct / 100 * 8);
 const font = pathToFileURL(join(ROOT, "node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")).href;
 const html = readFileSync(new URL("./hero.html", import.meta.url), "utf8")
@@ -21,7 +26,7 @@ const html = readFileSync(new URL("./hero.html", import.meta.url), "utf8")
   .replace("__FILL__", "━".repeat(filled)).replace("__EMPTY__", "─".repeat(8 - filled));
 writeFileSync(join(OUT, "hero.gen.html"), html);
 console.log({ pct, reset });
-const p = await b.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+const p = await b.newPage({ viewport: { width: 1280, height: 920 }, deviceScaleFactor: 2 });
 await p.goto(pathToFileURL(join(OUT, "hero.gen.html")).href); await p.waitForTimeout(800);
 await (await p.$(".stage")).screenshot({ path: join(ROOT, "docs/readme/hero.png"), omitBackground: true });
 await b.close();
