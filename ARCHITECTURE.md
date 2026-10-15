@@ -64,6 +64,7 @@ All paths are relative to the Claude config dir: `~/.claude`, or `$CLAUDE_CONFIG
 | `usage-data/report.html` | The `/insights` report, proxied at `/usage-report.html`. |
 | `file-history/<id>/<hash>@v<n>` | File snapshots for the Files tab and diffs. |
 | `history.jsonl` | Fallback first prompt when neither transcript nor meta has one. |
+| `projects/<slug>/memory/` | Claude Code's memory folder (`MEMORY.md` index + one file per memory): read for the Context page (§5). |
 
 Codex (`~/.codex`, or `$CODEX_HOME`), also read-only: `sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`, `archived_sessions/` and `session_index.jsonl` (thread names). See "Codex rollouts" in §3.
 
@@ -228,6 +229,17 @@ Computed server-side after every parse from the sessions' incidents (Claude Code
 
 Each card also carries its count, sessions, trend (last 7 days vs the 7 before), latest error and up to 8 sessions. Cards with something to paste or try come first, then by spread. `coverage` says what was read (sessions, tool calls, results, failures, denials, waits) and warns when tool calls were found but no result could be read, so an empty list never hides a format change.
 
+### Context page (`scripts/agent-context.mjs`)
+
+What agents have in mind at start and what they left on disk, per project. Each parser feeds a collector (`createContextCollector`) per transcript, stored on the full session as `agentContext` (left out of `/api/sessions` and `/api/sessions/:id`):
+
+- **Instruction files**: Claude Code's `instructions` attachment (paths, type User / Project / Local / AutoMem, line counts), logged at start and after each compaction; a logged `prompt_snapshot` without it means none (Explore and Plan). Copilot CLI: the `<custom_instruction>` blocks of each `system.message` (no path: a hash, matched later to CLAUDE.md, AGENTS.md, `.github/copilot-instructions.md`, `.github/instructions/*`, `~/.copilot/copilot-instructions.md`). Codex logs none.
+- **Memory**: Read / Write / Edit on `projects/<slug>/memory/*.md`, and shell commands on those paths (`bashMemoryOps`: `rm` deletes; a redirection, `tee`, `sed -i`, `perl -pi` write; `cat`, `head`, `sed -n`, a grep read). Interpreter scripts are missed.
+- **Files written**: Write / Edit / MultiEdit / NotebookEdit (Claude), `FileChange` items and `apply_patch` (Codex, with add / update / delete), `create` / `edit` (Copilot CLI).
+- **Sub-agents**: Claude Code: brief = first user message (teammate wrapper stripped), received = its own `instructions` attachment (the session's copy as loaded at the session's start, not a fresh read), `none`, `unrecorded` or `conversation` (fork). Copilot CLI: `subagent.started` + the `task` call's `prompt`; received = the sub-agent's own system prompt blocks (general-purpose ones get them, explore / research / code-review don't). Codex: child rollouts; the brief is encrypted on both sides.
+
+`buildAgentContext(sessions, { project })` keeps the project's sessions that did something, finds the repository (git root of the shortest working folder, a worktree's main checkout, in the sessions' spelling of the path), reads the memory folder (index lines, front matter `name` / `description` / `type`, line counts, mtimes; files logged then removed; a folder that no longer exists), checks git (`ls-files`, untracked files, whether or not a session wrote them with a tool), classifies written paths (repo, worktree under `.claude/worktrees/` or a sibling `<repo>-<name>`, scratch, plans, agent config, outside; outside folders with 3+ files grouped) and takes the instruction files from the latest Claude Code session. The browser derives the rest (`src/utils/agentContext.ts`): per memory file its events by session, a "changed, no log says who" mark when its mtime is over 2 minutes past its last logged write (on the latest Claude session running then), and its status (re-read in 7 days, index line only, deleted, folder gone).
+
 ---
 
 ## 6. API (`scripts/api.mjs`)
@@ -247,6 +259,7 @@ Shared by the production server and the Vite dev server, so both expose the same
 | POST | `/api/sessions/:id/focus` | Bring the terminal running a live Claude Code session to the front (see below). Returns `{ app, exact }`. | UUID check; POST only; 409 unless the session is live with a pid; 501 off macOS. |
 | GET | `/api/file-history/:id/:hash@v:n` | Raw snapshot from `file-history/`. | id and file name regex-validated (no path traversal). |
 | GET | `/api/recommendations` | Recommendation cards and `coverage` from the last parse (§5). | `no-store`. |
+| GET | `/api/agent-context?project=<name>` | The Context page of one project (§5): sessions with what they loaded, remembered and wrote, the memory folder, instruction files, what is still open. | `no-store`; cached per project until the next parse or 30 s; 400 without `project`. |
 | GET | `/api/limits` | `{ claude, codex, copilot }`: each provider's plan usage or `null` (§5). | `no-store`. |
 | GET | `/api/live-context` | `readLiveContext()`: context / prompt-cache snapshots per session, newest first. | `no-store`. |
 | GET | `/api/report-status` | Whether `usage-data/report.html` exists, and its mtime. | `no-store`. |
@@ -297,7 +310,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 - Page (`now` / `sessions` / `usage` / `health`, see `utils/pages.ts`), selected session, range (`today` / `7d` / `30d` / `all`), list filter (`all`, `live`, `ghost`, `friction`, `failed`, `lowquality`), project and search are mirrored to the URL hash (`#<page>?range=…&filter=…&project=…&q=…`, or `#session/<id>?…` while a session is open; Now has no path) and to `localStorage` (`marey:state`).
 - **Scope.** Sessions, Usage and Health follow the range and filters; Now ignores them. The scope bar sits where it applies: on top of Sessions, which is all scoped (with the headline tiles, `StatsRow`); on Usage and Health, at the head of the section it drives ("History", "Checks"), sticky while that section scrolls, below the sections it doesn't (the current 5h window, the recommendations), which carry no controls. Usage keeps the tiles in its History section; Health has none. The table sort (`utils/sortSessions.ts`) also orders ↑ / ↓ in the session view.
 - The detail view merges the list summary with the fetched full session.
-- Keyboard: `1`–`4` (Now, Sessions, Usage, Health), `j`/`k` or arrows (next/previous session while one is open), `Esc` (close), `?` (help).
+- Keyboard: `1`–`5` (Now, Sessions, Usage, Health, Context), `j`/`k` or arrows (next/previous session while one is open), `Esc` (close), `?` (help).
 
 ### Components
 
@@ -305,6 +318,8 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 |---|---|
 | `AppHeader` | Brand, provider switcher, page navigation (sessions that need you on Now, also in the browser tab title; session count on Sessions), `LimitsPill` (opens Now), `ParseErrors`, `ProfileMenu`. |
 | `ScopeBar` / `SessionFilters` | Range, project and status pickers (counts from the range, before filtering; ghosts split by crashed / empty in the tooltip), search, the resulting count and a reset. Clicking a project in the sessions table filters on it. |
+| `ProjectPicker` | The project picker of Sessions and Context: a button opening a list with a search field (↑ ↓ Enter Esc), sessions per provider, "All projects" where it applies. |
+| `ContextPage` (`components/agent-context/`) | The Context page: `HeadBar` (one segment per file read at start or behind the memory index, a label on hover, a click opens the memory), `SessionGrid` (sessions as columns: loaded at start, sub-agents, repo files written, one row per memory file; scrolled to the newest), `SessionView` / `FileView` (one session with its sub-agents' briefs and what they received; one memory file with its index line, description and history), `StillOpen`. Follows the provider switcher; the project is the app's project filter, else the latest one. |
 | `Kpi` / `KpiRow` | The one headline-tile style (label, value, context line), used by `StatsRow`, the session view and the 5h window. Up to six tiles share a row. |
 | `LimitsPill` | Plan usage always on screen (fill, elapsed-time tick): in the top bar, each selected provider's fullest window, a click opening Now; in the session view, every window of the session's provider. |
 | `PlanCard` | One provider's plan on the Now page: each window's % used (5h and week, or the month of AI credits with used / included), reset time, elapsed-time tick, and the bar split into the running sessions' slices (pointing at one lights up its row on the board and reads out its share under the bar; a click opens the session) and the rest; how fresh the reading is; today's tokens, AI credits and API value; "What used it" opens Usage. Without limits it says how to get them, and splits the bar by the window's use instead. |
