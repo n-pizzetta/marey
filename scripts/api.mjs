@@ -19,6 +19,7 @@ import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
 import { buildRecommendations } from "./recommendations.mjs";
 import { codexLimits, copilotLimits } from "./provider-limits.mjs";
+import { readCodexLiveLimits } from "./codex-live-limits.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
@@ -58,6 +59,25 @@ const cache = {
   /** Freshest Codex limits and Copilot quota logged in their sessions (provider-limits.mjs). */
   readings: { codex: null, copilot: null },
 };
+
+/** Codex's limits asked live (codex-live-limits.mjs): once a minute while the dashboard polls them. */
+const codexLive = { reading: null, nextAt: 0, pending: false };
+const CODEX_LIVE_EVERY_MS = 60_000;
+const CODEX_LIVE_RETRY_MS = 10 * 60_000;
+
+/**
+ * Refreshes Codex's live limits in the background; /api/limits answers with what it holds. Only
+ * once its rollouts have logged limits: signed in with a ChatGPT plan, the only kind that has them.
+ */
+function refreshCodexLive(now) {
+  if (codexLive.pending || now < codexLive.nextAt || !cache.readings.codex) return;
+  codexLive.pending = true;
+  readCodexLiveLimits({ version: VERSION }).then((reading) => {
+    if (reading) codexLive.reading = reading;
+    codexLive.nextAt = Date.now() + (reading ? CODEX_LIVE_EVERY_MS : CODEX_LIVE_RETRY_MS);
+    codexLive.pending = false;
+  });
+}
 
 async function runParser() {
   if (parsing) {
@@ -323,14 +343,18 @@ async function handleApi(req, res) {
     return sendJson(res, 200, { name: "marey", version: VERSION, pid: process.pid });
   }
 
-  // Plan usage per provider: Claude Code from its status line, Codex and Copilot CLI from their sessions.
+  // Plan usage per provider: Claude Code from its status line, Codex live or from its sessions,
+  // Copilot CLI from its sessions.
   if (url === "/api/limits") {
     res.setHeader("cache-control", "no-store");
     cache.limits = mergeLimits(cache.limits, await readLimits());
     const now = Date.now();
+    refreshCodexLive(now);
+    const logged = cache.readings.codex;
+    const live = codexLive.reading;
     return sendJson(res, 200, {
       claude: cache.limits,
-      codex: codexLimits(cache.readings.codex, now),
+      codex: codexLimits(live && live.tsMs > (logged?.tsMs ?? 0) ? live : logged, now),
       copilot: copilotLimits(cache.readings.copilot, now),
     });
   }

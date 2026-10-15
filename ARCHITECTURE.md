@@ -24,6 +24,7 @@ There is no database, no network access beyond loopback except the daily update 
       scripts/codex.mjs           ── ~/.codex/sessions/**/rollout-*.jsonl → same shape
       scripts/copilot.mjs         ── ~/.copilot/session-state/*/events.jsonl → same shape
       scripts/provider-limits.mjs ── Codex limits and Copilot quota from those files
+      scripts/codex-live-limits.mjs ── Codex limits asked live (`codex app-server`)
       scripts/models.mjs          ── pricing table, shared with the UI
                     │
                     ▼
@@ -171,10 +172,10 @@ Costs are API-equivalent estimates; they are not what a subscription plan bills.
 Each provider reports its plan usage per account, in its own place, and [`scripts/provider-limits.mjs`](scripts/provider-limits.mjs) puts them in one shape for `/api/limits` (`{ claude, codex, copilot }`, null for a provider with nothing to read):
 
 - **Claude Code**: the 5h and weekly windows, only in the JSON it pipes to the status line command (steps 1–4 below).
-- **Codex**: the same two windows, in every rollout's `token_count` events (§3). `codexLimits` takes the freshest reading among all rollouts and places each window by its length (a 300-minute one is the 5h window, one over a day the weekly), so a plan with a weekly limit only has no 5h window. `capturedAt` is the time of that request.
+- **Codex**: the same two windows, in every rollout's `token_count` events (§3), and live from its server: once a minute while the dashboard polls `/api/limits`, [`scripts/codex-live-limits.mjs`](scripts/codex-live-limits.mjs) starts `codex app-server` (the JSON-RPC interface its editor extensions use), sends `initialize` then `account/rateLimits/read`, and stops it (about half a second). That is what Codex's own TUI asks every minute, and it catches what the rollouts miss until the next request: an early reset, use from another machine or the web. It runs in the background (the route answers with what it holds) and only once a rollout has logged limits, since only a ChatGPT sign-in has them; a failure (Codex missing, an API key, offline) falls back to the rollouts and retries after 10 minutes. A window at 0% whose reset is a full window away has not started (Codex reports the reset a window opened now would have), so its reset is dropped. `codexLimits` takes whichever reading is fresher, the live one or the freshest among all rollouts, and places each window by its length (a 300-minute one is the 5h window, one over a day the weekly), so a plan with a weekly limit only has no 5h window. `capturedAt` is the time of that reading, and `live` marks a live one (the card says "live" instead of "last request").
 - **Copilot CLI**: the monthly quota of AI credits, in every session's `model.model_call_success` events (§3). `copilotLimits` turns the freshest reading into a `month` window: `usedPct` from `usedRequests / entitlementRequests` (past 100 is overage), with `used` and `entitlement`. Null on an unlimited plan.
 
-A window whose reset time has passed since the reading starts over at 0% with an unknown reset. Codex's and Copilot's readings are as fresh as the last request made with them on this machine (the cards say how old); use from other machines, IDEs or the web shows up with the next one.
+A window whose reset time has passed since the reading starts over at 0% with an unknown reset. Copilot's readings, and Codex's when it can't be asked live, are as fresh as the last request made with them on this machine (the cards say how old); use from other machines, IDEs or the web shows up with the next one.
 
 The burn tracker and the spike analysis only follow Claude's 5h window. For Claude Code:
 
@@ -362,7 +363,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 ## 11. Known limitations
 
 - **Live detection needs `ps`.** `isClaudePidAlive` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
-- **Codex and Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one.
+- **Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one. Codex's too when `codex app-server` can't be asked (Codex not on the `PATH`, signed in with an API key, offline).
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
 - **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call).
 - **Opening a terminal is macOS only and exact in Ghostty only.** Other apps (iTerm2, Terminal, VS Code…) are only brought to the front; a session inside tmux, zellij or screen is refused.
