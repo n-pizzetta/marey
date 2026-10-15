@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Picking a project on Context no longer filters Sessions, Usage and Health: Context keeps its own
+  project. A project filtered on Sessions still carries over to Context.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
