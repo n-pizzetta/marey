@@ -15,7 +15,7 @@ import "../agent-context.css";
 interface Props {
   allSessions: Session[];
   provider: Provider;
-  /** The project picked anywhere in the app (shared with the Sessions page); null falls back to the latest one. */
+  /** Context's own project, else the one filtered on Sessions; null falls back to the latest one. */
   project: string | null;
   onProjectChange: (project: string | null) => void;
   generatedAt?: string;

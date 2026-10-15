@@ -51,6 +51,8 @@ interface PersistedState {
   filter: FilterId;
   provider: Provider;
   project: string | null;
+  /** The project shown on Context: its own choice, so it never filters the other pages. */
+  contextProject: string | null;
   search: string;
 }
 
@@ -78,7 +80,8 @@ function parseHash(): Partial<PersistedState> {
     const provider = params.get("provider");
     if (isProvider(provider)) out.provider = provider;
     const p = params.get("project");
-    if (p) out.project = p;
+    if (p && out.page === "context") out.contextProject = p;
+    else if (p) out.project = p;
     const q = params.get("q");
     if (q) out.search = q;
   }
@@ -106,7 +109,8 @@ function writeHash(state: PersistedState) {
   if (state.range !== "7d") params.set("range", state.range);
   if (state.filter !== "all") params.set("filter", state.filter);
   if (state.provider !== "all") params.set("provider", state.provider);
-  if (state.project) params.set("project", state.project);
+  const project = state.page === "context" && !state.id ? state.contextProject : state.project;
+  if (project) params.set("project", project);
   if (state.search) params.set("q", state.search);
   const qs = params.toString();
   const path = state.id ? `session/${state.id}` : state.page !== "now" ? state.page : "";
@@ -128,6 +132,7 @@ function App() {
   const [filter, setFilter] = useState<FilterId>(initial.filter ?? "all");
   const [preferredProvider, setPreferredProvider] = useState<Provider>(isProvider(initial.provider) ? initial.provider : "all");
   const [projectFilter, setProjectFilter] = useState<string | null>(initial.project ?? null);
+  const [contextProject, setContextProject] = useState<string | null>(initial.contextProject ?? null);
   const [range, setRange] = useState<Range>(initial.range ?? "7d");
   const [search, setSearch] = useState(initial.search ?? "");
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
@@ -159,15 +164,21 @@ function App() {
 
   useEffect(() => {
     // The choice, not the resolved provider: a Claude-only history must not pin "claude" once Codex shows up.
-    const state: PersistedState = { page, id: selectedId, range, filter, provider: preferredProvider, project: projectFilter, search };
+    const state: PersistedState = { page, id: selectedId, range, filter, provider: preferredProvider, project: projectFilter, contextProject, search };
     writeHash(state);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
-  }, [page, selectedId, range, filter, preferredProvider, projectFilter, search]);
+  }, [page, selectedId, range, filter, preferredProvider, projectFilter, contextProject, search]);
 
   /** Leaving the ghost filter with a bigger selection than a comparison can hold trims it. */
   const changeFilter = (f: FilterId) => {
     setFilter(f);
     if (f !== "ghost") setCompareIds((prev) => (prev.size > MAX_COMPARE ? new Set([...prev].slice(0, MAX_COMPARE)) : prev));
+  };
+
+  /** Context follows a project picked as a filter; a project picked on Context filters nothing. */
+  const changeProjectFilter = (p: string | null) => {
+    setProjectFilter(p);
+    if (p) setContextProject(p);
   };
 
   const resetFilters = () => {
@@ -350,7 +361,7 @@ function App() {
       filter={filter}
       onFilterChange={changeFilter}
       projectFilter={projectFilter}
-      onProjectFilterChange={setProjectFilter}
+      onProjectFilterChange={changeProjectFilter}
       search={search}
       onSearchChange={setSearch}
       inRange={inRange}
@@ -412,7 +423,7 @@ function App() {
             onSelect={setSelectedId}
             sort={sort}
             onSortChange={setSort}
-            onProjectClick={(p) => setProjectFilter((cur) => (cur === p ? null : p))}
+            onProjectClick={(p) => changeProjectFilter(projectFilter === p ? null : p)}
             compareMode={compareMode}
             onToggleCompareMode={() => {
               setCompareMode((v) => {
@@ -473,7 +484,7 @@ function App() {
           <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} scopeBar={scopeBar} onSelectSession={setSelectedId} />
         )}
         {page === "context" && (
-          <ContextPage allSessions={allSessions} provider={provider} project={projectFilter} onProjectChange={setProjectFilter} generatedAt={generatedAt} />
+          <ContextPage allSessions={allSessions} provider={provider} project={contextProject ?? projectFilter} onProjectChange={setContextProject} generatedAt={generatedAt} />
         )}
       </main>
       {showClaude && analysisSpike && (
