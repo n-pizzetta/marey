@@ -126,15 +126,22 @@
 .profile-trigger.open { background: var(--c-fill); }
 .profile-trigger:focus-visible { outline: 2px solid var(--c-cyan); outline-offset: 2px; }
 .profile-status { width: 8px; height: 8px; border-radius: 50%; background: var(--c-green); }
-.profile-status.mock { background: var(--c-amber); }
+.profile-status.warn { background: var(--c-amber); }
 .profile-gear { color: var(--c-text-dim); }
 .profile-trigger:hover .profile-gear, .profile-trigger.open .profile-gear { color: var(--c-text); }
 
-.profile-popover { width: 300px; gap: 10px; }
+/* one font throughout: the UI's; values aren't code */
+.profile-popover { width: 320px; gap: 12px; font-size: var(--fs-base); }
 
 .profile-links,
 .profile-foot { display: flex; flex-direction: column; gap: 2px; }
-.profile-foot { padding-top: 8px; border-top: 1px solid var(--c-hairline); }
+.profile-foot { padding-top: 10px; border-top: 1px solid var(--c-hairline); }
+.profile-unit { display: flex; flex-direction: column; gap: 6px; }
+.profile-status-block { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--c-hairline); }
+.profile-status-line { display: flex; align-items: center; gap: 8px; color: var(--c-text-soft); }
+.profile-issue { margin: 0 0 0 15px; font-size: var(--fs-md); line-height: 1.45; color: var(--c-text-dim); }
+.profile-issue.warn { color: var(--c-amber); }
+.profile-issue code { font-family: var(--f-mono); font-size: var(--fs-sm); color: var(--c-text); }
 .profile-link {
   display: flex;
   justify-content: space-between;
@@ -164,7 +171,7 @@
 }
 .profile-link.disabled { cursor: default; color: var(--c-text-dim); }
 .profile-link.disabled:hover { background: none; }
-.profile-link.disabled .mono { font-size: var(--fs-sm); }
+.profile-link.disabled .dim { font-size: var(--fs-md); }
 .profile-local { font-size: var(--fs-sm); padding-top: 4px; }
 
 /* settings and status: one label/value row each */
