@@ -43,7 +43,7 @@ const GLOSSARY: Array<[string, string]> = [
   ["Cost", "Estimated at public API prices from token counts. It is not what a subscription plan bills you."],
   ["5h window", "Claude Code and Codex limits reset on a rolling five-hour window, plus a weekly one. The bar shows how much of it you have used, split by running session."],
   ["AI credits", "What Copilot CLI's monthly quota counts: every request is priced per token type, whoever started it (you, the agent or a sub-agent)."],
-  ["Share of the limit", "How much of a plan's limit a session used: its share of the window's API value (Claude Code, Codex; Claude's cache reads count a tenth) or of the month's AI credits (Copilot CLI). An estimate: the providers don't report it per session."],
+  ["Share of the limit", "How much of a plan's limit a session used: its share of the window's API value (Claude Code, Codex; Claude's cache reads count a tenth) or of the month's AI credits (Copilot CLI). An estimate: the providers don't report it per session. For Claude Code and Codex, the window's whole % is split between this machine's sessions, so use on the web or on another machine counts toward them too."],
   ["Burn rate", "Tokens or dollars consumed per minute over the last 60 seconds."],
   ["Spike", "Your 5h limit jumped by 4 percentage points (amber) or 10 (red) within 5 minutes."],
   ["Ghost", "A session that ended without a clean shutdown, so its data may be incomplete."],

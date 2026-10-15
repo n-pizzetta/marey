@@ -21,6 +21,9 @@ interface Props {
 
 type Axis = "tokens" | "cost";
 
+/** Fewest buckets drawn once the empty start of the range is cut. */
+const MIN_BUCKETS = 12;
+
 function formatBucketTime(ms: number, range: Range): string {
   const d = new Date(ms);
   if (range === "today") return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
@@ -56,7 +59,11 @@ export function TokenTimeSeries({ sessions, range }: Props) {
     }
 
     const { fromMs, toMs } = rangeBoundsMs(sessions, range);
-    const rawBuckets = bucketizeByProject(sessions, range, fromMs, toMs);
+    const allBuckets = bucketizeByProject(sessions, range, fromMs, toMs);
+    // Start where the usage starts, not at the range's start (midnight for Today), so the bars
+    // aren't all squeezed on the right; keep a few buckets so a short burst doesn't fill the width.
+    const firstUsed = allBuckets.findIndex((b) => b.byProject.size > 0);
+    const rawBuckets = firstUsed > 0 ? allBuckets.slice(Math.min(firstUsed, Math.max(0, allBuckets.length - MIN_BUCKETS))) : allBuckets;
 
     // Collapse non-top projects into "other"
     const collapsed = rawBuckets.map((b) => {

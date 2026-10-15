@@ -1,3 +1,3 @@
-// A process named `claude` that only sleeps, so the live-session check (`ps -o comm=`) sees livesim.mjs's session as running.
+// A process that only sleeps, built as `claude` and `copilot`, so the live-session checks (`ps -o comm=`) see the simulated sessions as running.
 #include <unistd.h>
 int main(){sleep(3600);return 0;}

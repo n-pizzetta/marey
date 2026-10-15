@@ -4,7 +4,10 @@ import { frictionTimes, type TimelineFriction } from "./frictionTimes";
 import { flattenCalls } from "./toolCalls";
 import { freshTokens } from "./units";
 
-/** Same rule as scripts/quality.mjs: the window isn't in the transcript, a context over 200k proves a 1M window. */
+/**
+ * When the parser couldn't take the window from a live snapshot (`contextWindow`), the same rule as
+ * scripts/quality.mjs: the window isn't in the transcript, a context over 200k proves a 1M window.
+ */
 const STANDARD_WINDOW = 200_000;
 const LARGE_WINDOW = 1_000_000;
 /** Idle gaps longer than this are drawn as a fixed-width break instead of to scale. */

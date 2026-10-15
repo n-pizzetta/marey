@@ -32,9 +32,8 @@
   border-radius: var(--radius-md);
   cursor: pointer;
 }
-.board-row:hover, .board-row:focus-visible { background: var(--c-bg-hover); outline: none; }
-.board-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: 600; color: var(--c-text); }
-.board-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-row:hover, .board-row:focus-visible, .board-row.linked { background: var(--c-bg-hover); outline: none; }
+.board-name { font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-provider { color: var(--c-text-faint); }
 .board-project { font-size: var(--fs-sm); color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-line { font-size: var(--fs-base); color: var(--c-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

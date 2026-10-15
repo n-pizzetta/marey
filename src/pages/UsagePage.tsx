@@ -20,17 +20,19 @@ interface Props {
   windowProviders: Agent[];
   limits: RateLimits | null;
   range: Range;
-  /** The scope's headline figures, shown with the scoped charts rather than above the current windows. */
+  /** The range and filters, heading the section they drive (the current windows ignore them). */
+  scopeBar: ReactNode;
+  /** The scope's headline figures. */
   stats: ReactNode;
   onSelectSession: (id: string) => void;
 }
 
-/** What used the current 5h windows, then where tokens and API value went in the scope: over time, by project, model and tool. */
-export function UsagePage({ sessions, allSessions, everySession, windowProviders, limits, range, stats, onSelectSession }: Props) {
+/** What uses the current 5h windows, then where tokens and API value went over the range: over time, by project, model and tool. */
+export function UsagePage({ sessions, allSessions, everySession, windowProviders, limits, range, scopeBar, stats, onSelectSession }: Props) {
   return (
     <div className="page">
       {windowProviders.length > 0 && (
-        <PageSection title="Current 5h window" note="What is using it · not affected by the range or filters">
+        <PageSection title="Current 5h window" note="What is using it right now">
           {windowProviders.map((p) => (
             <FiveHourSession
               key={p}
@@ -42,7 +44,8 @@ export function UsagePage({ sessions, allSessions, everySession, windowProviders
           ))}
         </PageSection>
       )}
-      <PageSection title="In the scope" note="Follows the range and filters">
+      <PageSection title="History" note="Over the range and filters below">
+        {scopeBar}
         {stats}
         <TokenTimeSeries sessions={sessions} range={range} />
         <div className="page-grid-3">

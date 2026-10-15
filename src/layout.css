@@ -115,8 +115,6 @@
   gap: var(--page-gap);
   padding: var(--page-gap) var(--pad-x) 40px;
 }
-/* the Sessions page: the table scrolls, not the page */
-.app-content.fill { overflow: hidden; padding-bottom: var(--page-gap); }
 
 /* ---- Scope bar: range and filters on the left, what they add up to and the search on the right ---- */
 /* flat: one fill track for the range, ghost selects, one fill search; no glass, no panel */
@@ -226,7 +224,7 @@
 
 /* ---- Pages ---- */
 .page { display: flex; flex-direction: column; gap: var(--page-gap); min-width: 0; }
-.page-fill { flex: 1; min-height: 0; gap: 12px; }
+.page-sessions { gap: 12px; }
 
 .page-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .page-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
@@ -351,18 +349,19 @@
 .tool-btn:hover { background: var(--c-fill); }
 .tool-btn.active { color: var(--c-cyan); background: color-mix(in srgb, var(--c-cyan) 16%, transparent); }
 
+/* the page scrolls the table: the tiles above leave the screen first, then the rows */
 .sessions-body {
-  flex: 1;
-  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
 }
 .sessions-body.comparing { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.sessions-body .compare-wrap { overflow-y: auto; min-height: 0; }
+/* the comparison stays in view beside the rows as they scroll */
+.sessions-body .compare-wrap { position: sticky; top: 0; max-height: calc(100dvh - 140px); overflow-y: auto; }
 @media (max-width: 1100px) {
-  .sessions-body.comparing { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .sessions-body.comparing { grid-template-columns: minmax(0, 1fr); }
+  .sessions-body .compare-wrap { order: -1; position: static; max-height: none; }
 }
 
 .bulk-bar { padding: 0; font-size: var(--fs-md); background: none; border: none; gap: 8px; }
@@ -382,7 +381,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* clip, not hidden: hidden would make the table a scroll container and keep its header from sticking */
+  overflow: clip;
   padding: 6px;
   background: var(--c-bg-panel);
   border: none;
@@ -405,14 +405,26 @@
   font-weight: 500;
   color: var(--c-text-dim);
 }
+/* the column header stays at the top of the page while the rows scroll under it */
+.session-table:not(.auto-height) .st-head {
+  position: sticky;
+  /* the page's top padding would leave a gap above it where rows show through */
+  top: calc(-1 * var(--page-gap));
+  z-index: 2;
+  margin: -6px -6px 0;
+  padding: 6px 18px 0;
+  height: 42px;
+  background: var(--c-bg-panel);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 1px 0 var(--c-hairline);
+}
 .st-num { justify-self: end; text-align: right; white-space: nowrap; }
 .st-sort { display: inline-flex; align-items: center; gap: 2px; color: inherit; font-size: inherit; }
 .st-sort:hover,
 .st-sort.active { color: var(--c-text); }
 .st-sort-arrow { display: inline-block; width: 8px; }
 
-.st-scroll { flex: 1; min-height: 0; overflow-y: auto; }
-.session-table.auto-height .st-scroll { overflow: visible; }
+.st-scroll { flex: none; }
 
 .st-day {
   display: flex;
@@ -733,11 +745,6 @@
   color: var(--c-text-faint);
 }
 
-/* small screens: the Sessions page scrolls as a whole, the table keeps a usable height */
-@media (max-width: 900px) {
-  .app-content.fill { overflow-y: auto; }
-  .sessions-body { flex: none; height: 70vh; min-height: 420px; }
-}
 .profile-trigger { white-space: nowrap; }
 @media (max-width: 520px) {
   .app-header-right { order: 2; width: 100%; margin-left: 0; justify-content: space-between; }
@@ -748,4 +755,17 @@
   /* three providers on a phone: drop the window keys, the tooltip still names them */
   .app-header .limits-pill-item > .limits-pill-label { display: none; }
   .app-header .limits-pill-group { gap: 6px; }
+}
+
+/* Usage and Health: the scope bar heads the section it drives, and stays on top while it scrolls.
+   Full width over the page's padding, frosted so the charts pass under it. */
+.page-section > .scope-bar {
+  position: sticky;
+  top: calc(-1 * var(--page-gap));
+  z-index: 3;
+  margin-inline: calc(-1 * var(--pad-x));
+  padding: 10px var(--pad-x);
+  background: color-mix(in srgb, var(--c-bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
 }

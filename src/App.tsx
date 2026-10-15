@@ -340,7 +340,23 @@ function App() {
     );
   }
 
-  const scoped = SCOPED_PAGES.has(page);
+  // On Sessions the whole page is in the scope: its bar sits on top. Usage and Health open with
+  // sections that ignore it, so their bar heads the sections it drives.
+  const scopeBar = SCOPED_PAGES.has(page) ? (
+    <ScopeBar
+      range={range}
+      onRangeChange={setRange}
+      filter={filter}
+      onFilterChange={changeFilter}
+      projectFilter={projectFilter}
+      onProjectFilterChange={setProjectFilter}
+      search={search}
+      onSearchChange={setSearch}
+      inRange={inRange}
+      count={filtered.length}
+      onReset={resetFilters}
+    />
+  ) : null;
 
   return (
     <div className="app">
@@ -359,22 +375,8 @@ function App() {
         parseErrors={parseErrors}
         onHelp={() => setHelpOpen(true)}
       />
-      {scoped && (
-        <ScopeBar
-          range={range}
-          onRangeChange={setRange}
-          filter={filter}
-          onFilterChange={changeFilter}
-          projectFilter={projectFilter}
-          onProjectFilterChange={setProjectFilter}
-          search={search}
-          onSearchChange={setSearch}
-          inRange={inRange}
-          count={filtered.length}
-          onReset={resetFilters}
-        />
-      )}
-      <main className={`app-content scrollbar ${page === "sessions" ? "fill" : ""}`}>
+      {page === "sessions" && scopeBar}
+      <main className="app-content scrollbar">
         {showClaude && burn.activeSpike && (
           <BurnSpikeBanner
             spike={burn.activeSpike}
@@ -382,7 +384,7 @@ function App() {
             onDismiss={burn.dismissSpike}
           />
         )}
-        {scoped && page !== "usage" && (
+        {page === "sessions" && (
           <StatsRow
             sessions={scopedFiltered}
             totalInRange={inRange.length}
@@ -461,12 +463,13 @@ function App() {
             windowProviders={(provider === "all" ? providers : [provider]).filter((p) => p !== "copilot")}
             limits={limits}
             range={range}
+            scopeBar={scopeBar}
             stats={<StatsRow sessions={scopedFiltered} totalInRange={inRange.length} range={range} activeFilterCount={activeFilterCount} />}
             onSelectSession={setSelectedId}
           />
         )}
         {page === "health" && (
-          <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} onSelectSession={setSelectedId} />
+          <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} scopeBar={scopeBar} onSelectSession={setSelectedId} />
         )}
       </main>
       {showClaude && analysisSpike && (

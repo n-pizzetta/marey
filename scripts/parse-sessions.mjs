@@ -15,7 +15,7 @@ import { dirname, join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createQualityTracker } from "./quality.mjs";
+import { createQualityTracker, withWindow } from "./quality.mjs";
 import {
   addTokens,
   countShellKinds,
@@ -1035,6 +1035,33 @@ export async function readLiveContext(now = Date.now()) {
   return out.sort((a, b) => b.capturedAt - a.capturedAt);
 }
 
+/**
+ * Claude Code transcripts don't say how large the context window is (opus-5.5 can run at 1M
+ * without a `[1m]` suffix), so a session that peaked under 200k was read against 200k. The status
+ * line snapshots do say (`context.size`): a session takes its own, else the latest one of its
+ * model, and its quality score is re-scored against it. Without either, the inference stays.
+ */
+async function applyContextWindows(sessions) {
+  const byId = new Map();
+  const byModel = new Map();
+  // Newest first: the first size seen for a model is its latest.
+  for (const snap of await readLiveContext()) {
+    const size = snap.context?.size;
+    if (typeof size !== "number" || size <= 0) continue;
+    if (!byId.has(snap.sessionId)) byId.set(snap.sessionId, size);
+    const model = snap.model ? normalizeModel(snap.model) : null;
+    if (model && !byModel.has(model)) byModel.set(model, size);
+  }
+  for (const s of sessions) {
+    if (s.agent !== "claude" || s.contextWindow) continue;
+    const window = byId.get(s.id) ?? byModel.get(s.model);
+    // A peak past the window would prove the snapshot wrong for this session (another setting then).
+    if (!window || s.quality?.peak > window) continue;
+    s.contextWindow = window;
+    s.quality = withWindow(s.quality, window);
+  }
+}
+
 const MODEL_OVERRIDES_FILE = join(DATA, "models.json");
 
 /** User pricing overrides; see setModelOverrides in models.mjs. */
@@ -1148,6 +1175,7 @@ export async function parseAllSessions() {
   linkClearedChains(all);
   reassignLiveToChainTail(all);
   for (const s of all) markUnpriced(s);
+  await applyContextWindows(all);
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
 }
