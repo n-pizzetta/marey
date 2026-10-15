@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

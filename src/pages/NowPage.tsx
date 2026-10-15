@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Agent, Session } from "../types";
 import { SessionList } from "../components/SessionList";
 import { SessionBoard } from "../components/SessionBoard";
@@ -46,12 +46,14 @@ export function NowPage({ allSessions, provider, providers, limits, onSelectSess
   const usage = useMemo(() => runningUsage(plans), [plans]);
   const live = sessions.filter((s) => s.live);
   const several = shown.length > 1;
+  // Pointing at a row or a slice lights up the other: the board has no colors of its own.
+  const [hovered, setHovered] = useState<string | null>(null);
 
   return (
     <div className="page">
       <PageSection
         title="Plan usage"
-        note={several ? "Each bar splits by running session, in the colors below" : `${PROVIDER_LABELS[shown[0]] ?? ""} · split by running session, in the colors below`}
+        note={`${several ? "" : `${PROVIDER_LABELS[shown[0]] ?? ""} · `}Each bar splits by running session: point at a slice or a session to see which`}
       >
         <div className="plan-grid">
           {plans.map((plan) => (
@@ -59,6 +61,8 @@ export function NowPage({ allSessions, provider, providers, limits, onSelectSess
               key={plan.provider}
               usage={plan}
               colors={colors}
+              hovered={hovered}
+              onHover={setHovered}
               now={now}
               onSelectSession={onSelectSession}
               onDetails={plan.provider === "copilot" ? undefined : () => onOpenWindow(plan.provider)}
@@ -73,7 +77,7 @@ export function NowPage({ allSessions, provider, providers, limits, onSelectSess
           note={`${live.length} session${live.length > 1 ? "s" : ""}`}
           aside={<button className="link-btn" onClick={onShowAllSessions}>All sessions →</button>}
         >
-          <SessionBoard sessions={sessions} onSelectSession={onSelectSession} usage={usage} colors={colors} showProvider={several} />
+          <SessionBoard sessions={sessions} onSelectSession={onSelectSession} usage={usage} showProvider={several} hovered={hovered} onHover={setHovered} />
         </PageSection>
       ) : (
         <PageSection

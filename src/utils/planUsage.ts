@@ -175,32 +175,16 @@ export function elapsedFrac(w: Pick<PlanWindow, "resetsAt" | "spanMs" | "fromMs"
   return null;
 }
 
-/** Colors for running sessions, matched between the plan bars and the sessions board. */
-export const SESSION_PALETTE = [
-  "var(--c-cyan)",
-  "var(--c-violet)",
-  "var(--c-lime)",
-  "var(--c-coral)",
-  "var(--c-pink)",
-  "var(--c-teal)",
-  "var(--c-periwinkle)",
-];
+/** Colors of the running sessions' slices in the plan bars (muted tokens in plan.css). */
+export const SESSION_PALETTE = Array.from({ length: 7 }, (_, i) => `var(--slice-${i + 1})`);
 
 /**
- * One color per running session, by start time within its provider: distinct inside each plan card,
- * and a session keeps its color while others come and go.
+ * One color per running session, by start time across providers, so two sessions never share
+ * one while there are fewer than seven, and a session keeps its color while others come and go.
  */
 export function sessionColors(sessions: Session[]): Map<string, string> {
-  const out = new Map<string, string>();
-  const next = new Map<string, number>();
   const live = sessions.filter((s) => s.live).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt) || (a.id < b.id ? -1 : 1));
-  for (const s of live) {
-    const p = s.agent ?? "claude";
-    const i = next.get(p) ?? 0;
-    next.set(p, i + 1);
-    out.set(s.id, SESSION_PALETTE[i % SESSION_PALETTE.length]);
-  }
-  return out;
+  return new Map(live.map((s, i) => [s.id, SESSION_PALETTE[i % SESSION_PALETTE.length]]));
 }
 
 /** A running session's use of its plan, as the sessions board shows it. */

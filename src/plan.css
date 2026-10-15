@@ -1,4 +1,16 @@
 /* Plan usage cards (components/PlanCard.tsx): each provider's windows, split by running session */
+:root {
+  /* running sessions' slices: muted, and no blue or green, which the sessions board uses for
+     "your turn" and "working" */
+  --slice-1: #b7a3e6;
+  --slice-2: #e3a0bb;
+  --slice-3: #d6bd8c;
+  --slice-4: #df9f88;
+  --slice-5: #c59fd0;
+  --slice-6: #bea690;
+  --slice-7: #a6a3c8;
+}
+
 .plan-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
@@ -53,10 +65,14 @@
   border: 0;
   box-shadow: inset -1.5px 0 0 var(--c-bg-panel);
   cursor: pointer;
-  transition: width var(--t-slow), filter var(--t-fast);
+  transition: width var(--t-slow), filter var(--t-fast), opacity var(--t-fast);
 }
-.plan-bar-seg:hover, .plan-bar-seg:focus-visible { filter: brightness(1.25); outline: none; }
-.plan-bar-rest { display: block; height: 100%; opacity: 0.32; transition: width var(--t-slow); }
+.plan-bar-seg:focus-visible { outline: none; }
+/* a slice and its row on the sessions board light up together; the rest of the bar steps back */
+.plan-bar-seg.on { filter: brightness(1.2); }
+.plan-bar-seg.off { opacity: 0.3; }
+.plan-bar-rest { display: block; height: 100%; opacity: 0.32; transition: width var(--t-slow), opacity var(--t-fast); }
+.plan-bar-rest.off { opacity: 0.15; }
 .plan-meter.unknown .plan-bar-rest {
   opacity: 1;
   background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 4px, transparent 4px 8px);
@@ -95,8 +111,7 @@
 .plan-foot-label { color: var(--c-text-faint); }
 .plan-details { margin-left: auto; }
 
-/* Usage of a running session on the sessions board: its color, then its share of the plan */
+/* Usage of a running session on the sessions board: its share of the plan */
 .board-usage { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; justify-self: end; }
 .board-usage-pct { font-size: var(--fs-base); font-weight: 600; color: var(--c-text); }
 .board-usage-of { font-size: var(--fs-sm); color: var(--c-text-faint); }
-.board-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; align-self: center; }

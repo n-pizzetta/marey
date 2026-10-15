@@ -8,8 +8,11 @@ import "../plan.css";
 
 interface Props {
   usage: PlanUsage;
-  /** Running sessions' colors, shared with the sessions board. */
+  /** Running sessions' slice colors. */
   colors: Map<string, string>;
+  /** The session pointed at here or on the sessions board: its slice and its row light up together. */
+  hovered: string | null;
+  onHover: (id: string | null) => void;
   now: number;
   onSelectSession: (id: string) => void;
   /** Opens the breakdown of the current window (Usage page). */
@@ -27,10 +30,10 @@ function sourceNote(usage: PlanUsage, now: number): string | null {
 }
 
 /**
- * One provider's plan: each window's % used, split by running session (their color) and the
+ * One provider's plan: each window's % used, split by running session (one slice each) and the
  * rest (ended sessions, other machines), a tick for the time elapsed, and when it resets.
  */
-export function PlanCard({ usage, colors, now, onSelectSession, onDetails }: Props) {
+export function PlanCard({ usage, colors, hovered, onHover, now, onSelectSession, onDetails }: Props) {
   const { provider, limits, windows, today } = usage;
   const note = sourceNote(usage, now);
   const connected = windows.some((w) => w.usedPct !== null);
@@ -44,7 +47,7 @@ export function PlanCard({ usage, colors, now, onSelectSession, onDetails }: Pro
       </header>
 
       {windows.map((w) => (
-        <Meter key={w.key} window={w} colors={colors} now={now} onSelectSession={onSelectSession} />
+        <Meter key={w.key} window={w} colors={colors} hovered={hovered} onHover={onHover} now={now} onSelectSession={onSelectSession} />
       ))}
 
       {!connected && <NotConnected provider={provider} />}
@@ -70,7 +73,16 @@ function NotConnected({ provider }: { provider: PlanUsage["provider"] }) {
   return <p className="plan-hint">No quota in your Copilot CLI sessions yet: it comes with its next request.</p>;
 }
 
-function Meter({ window: w, colors, now, onSelectSession }: { window: PlanWindow; colors: Map<string, string>; now: number; onSelectSession: (id: string) => void }) {
+interface MeterProps {
+  window: PlanWindow;
+  colors: Map<string, string>;
+  hovered: string | null;
+  onHover: (id: string | null) => void;
+  now: number;
+  onSelectSession: (id: string) => void;
+}
+
+function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: MeterProps) {
   const known = w.usedPct !== null;
   const used = known ? Math.min(100, w.usedPct!) : 100;
   const elapsed = known ? elapsedFrac(w, now) : null;
@@ -81,6 +93,9 @@ function Meter({ window: w, colors, now, onSelectSession }: { window: PlanWindow
   const rest = Math.max(0, (known ? used : w.shares.length ? 100 : 0) - runningPts);
   const color = known ? limitColor(used / 100) : "var(--c-text)";
   const ahead = elapsed !== null && known && used / 100 - elapsed > 0.1;
+  // A slice only lights up in the card whose window the session used; elsewhere nothing dims.
+  const pointed = running.find((s) => s.session.id === hovered) ?? null;
+  const state = (id: string) => (pointed ? (id === pointed.session.id ? " on" : " off") : "");
 
   return (
     <div className={`plan-meter ${known ? "" : "unknown"}`}>
@@ -109,23 +124,32 @@ function Meter({ window: w, colors, now, onSelectSession }: { window: PlanWindow
         {running.map((s) => (
           <button
             key={s.session.id}
-            className="plan-bar-seg"
+            className={`plan-bar-seg${state(s.session.id)}`}
             style={{ width: `${slice(s)}%`, background: colors.get(s.session.id) }}
-            title={shareTitle(w, s)}
             aria-label={shareTitle(w, s)}
             onClick={() => onSelectSession(s.session.id)}
+            onMouseEnter={() => onHover(s.session.id)}
+            onMouseLeave={() => onHover(null)}
+            onFocus={() => onHover(s.session.id)}
+            onBlur={() => onHover(null)}
           />
         ))}
         {rest > 0 && (
           <span
-            className="plan-bar-rest"
+            className={`plan-bar-rest${pointed ? " off" : ""}`}
             style={{ width: `${rest}%`, background: known ? color : undefined }}
             title={known ? "Sessions that are no longer running, and use from elsewhere (other machines, IDEs, the web)" : "Sessions that are no longer running"}
           />
         )}
         {elapsed !== null && <span className="plan-bar-pace" style={{ left: `${elapsed * 100}%` }} title={`${Math.round(elapsed * 100)}% of the ${w.label.toLowerCase()} elapsed`} />}
       </div>
-      {running.length > 0 && (
+      {pointed ? (
+        // The slice's readout, right under it: which session, how much.
+        <div className="plan-meter-note">
+          <b>{nameOf(pointed.session)}</b>: <b className="tabular">{pctText(slice(pointed))}</b>{" "}
+          {known ? `of the ${pctText(w.usedPct!)}` : "of this window's use"} · {usedText(w, pointed)}
+        </div>
+      ) : running.length > 0 && (
         <div className="plan-meter-note">
           {known
             ? <>Running sessions: <b className="tabular">{pctText(runningPts)}</b> of the {pctText(w.usedPct!)}</>
@@ -145,9 +169,15 @@ function resetText(w: PlanWindow, now: number): string {
   return "";
 }
 
+/** The name the sessions board shows. */
+const nameOf = (s: PlanWindow["shares"][number]["session"]) => s.liveName ?? s.project;
+
+const usedText = (w: PlanWindow, s: PlanWindow["shares"][number]) =>
+  w.key === "month" ? `${formatCredits(s.credits)} AI credits` : `${formatTokens(s.tokens)} tokens · ${formatCost(s.cost)} API value`;
+
 function shareTitle(w: PlanWindow, s: PlanWindow["shares"][number]): string {
-  const name = s.session.liveName ?? s.session.goal ?? s.session.project;
-  const what = w.key === "month" ? `${formatCredits(s.credits)} AI credits` : `${formatTokens(s.tokens)} tokens · ${formatCost(s.cost)} API value`;
+  const name = nameOf(s.session);
+  const what = usedText(w, s);
   const pts = s.limitPct !== null ? `${pctText(s.limitPct)} of the limit` : `${pctText(s.part * 100)} of this ${w.label.toLowerCase()}'s use`;
   return `${name}: ${pts} · ${what}`;
 }
