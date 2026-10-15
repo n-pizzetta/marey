@@ -6,10 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Codex limits are live: while the dashboard is open, Marey asks `codex app-server` for them once a minute, as Codex's own TUI does, instead of waiting for a request to log them. An early reset or use from another machine shows up right away, and the card says "live". A window that hasn't started yet shows as idle rather than with a reset a full window away. Without Codex on the `PATH`, with an API key or offline, the limits still come from the session files.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -22,6 +18,12 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.10.0] — 2026-10-15
+
+### Changed
+
+- Codex limits are live: while the dashboard is open, Marey asks `codex app-server` for them once a minute, as Codex's own TUI does, instead of waiting for a request to log them. An early reset or use from another machine shows up right away, and the card says "live". A window that hasn't started yet shows as idle rather than with a reset a full window away. Without Codex on the `PATH`, with an API key or offline, the limits still come from the session files.
 
 ## [0.9.1] — 2026-10-15
 
