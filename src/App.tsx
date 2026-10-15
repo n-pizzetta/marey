@@ -13,6 +13,7 @@ import { NowPage } from "./pages/NowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { HealthPage } from "./pages/HealthPage";
+import { ContextPage } from "./pages/ContextPage";
 import { loadSessions, loadSessionDetail } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
@@ -470,6 +471,9 @@ function App() {
         )}
         {page === "health" && (
           <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} scopeBar={scopeBar} onSelectSession={setSelectedId} />
+        )}
+        {page === "context" && (
+          <ContextPage allSessions={allSessions} provider={provider} project={projectFilter} onProjectChange={setProjectFilter} generatedAt={generatedAt} />
         )}
       </main>
       {showClaude && analysisSpike && (

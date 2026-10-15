@@ -44,6 +44,7 @@
 .provider-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--c-text-dim); }
 .provider-dot.claude { background: var(--c-amber); }
 .provider-dot.codex { background: var(--c-green); }
+.provider-dot.copilot { background: #8d97ab; }
 .provider-single { margin-left: 6px; font-size: var(--fs-md); color: var(--c-text-dim); }
 .provider-note { font-size: var(--fs-md); line-height: 1.5; }
 .app-nav {
@@ -191,6 +192,59 @@
 /* a filter that is on reads as a selection */
 .scope-select.set { background: color-mix(in srgb, var(--c-cyan) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-cyan) 30%, transparent); }
 .scope-select:focus-within { outline: 2px solid var(--c-cyan); outline-offset: 2px; }
+
+/* Project picker: a button opening a searchable list (components/ProjectPicker.tsx) */
+.pp-wrap { position: relative; }
+.pp-btn { color: var(--c-text); }
+.pp-btn:focus-visible { outline: 2px solid var(--c-cyan); outline-offset: 2px; }
+.pp-value { max-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+.pp {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(340px, calc(100vw - 32px));
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--c-bg-elevated);
+  box-shadow: var(--shadow-glass);
+}
+.pp-q {
+  height: 34px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--fs-base);
+  color: var(--c-text);
+  background: var(--c-fill);
+  border: none;
+  border-radius: 9px;
+  outline: none;
+}
+.pp-q:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-cyan) 45%, transparent); }
+.pp-list { max-height: 300px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.pp-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: var(--fs-base);
+  color: var(--c-text-soft);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pp-list li[aria-selected="true"] { color: var(--c-text); background: var(--c-bg-hover); }
+.pp-list li.cur .pp-name::after { content: " ✓"; color: var(--c-cyan); }
+.pp-list .pp-none { color: var(--c-text-faint); cursor: default; }
+.pp-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pp-name mark { font-weight: 600; color: var(--c-text); background: none; }
+.pp-cnt { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.pp-cnt > span { display: inline-flex; align-items: center; gap: 4px; }
+.pp-all { background: var(--c-text-ghost); }
+.pp-foot { padding: 4px 10px 2px; font-size: var(--fs-sm); color: var(--c-text-faint); }
 
 .scope-search {
   width: 280px;

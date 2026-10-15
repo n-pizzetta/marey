@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Session } from "../types";
-import { projectColor } from "../utils/fleetStats";
+import { ProjectPicker } from "./ProjectPicker";
+import { projectOptions } from "../utils/projectOptions";
 
 export type FilterId = "all" | "live" | "ghost" | "friction" | "failed" | "lowquality";
 
@@ -61,31 +62,12 @@ function statusItems(sessions: Session[]): Item[] {
 /** Status and project pickers of the scope bar. Counts come from the range, before filtering. */
 export function SessionFilters({ filter, onFilterChange, projectFilter, onProjectFilterChange, sessions }: Props) {
   const items = useMemo(() => statusItems(sessions), [sessions]);
-  const projects = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const s of sessions) counts.set(s.project, (counts.get(s.project) ?? 0) + 1);
-    return [...counts.entries()].sort(([, a], [, b]) => b - a);
-  }, [sessions]);
+  const projects = useMemo(() => projectOptions(sessions), [sessions]);
   const activeStatus = items.find((i) => i.id === filter);
 
   return (
     <>
-      <label className={`scope-select ${projectFilter ? "set" : ""}`}>
-        <span className="scope-select-label">Project</span>
-        {projectFilter && (
-          <span className="project-dot" style={{ background: projectColor(projectFilter) }} aria-hidden="true" />
-        )}
-        <select value={projectFilter ?? ""} onChange={(e) => onProjectFilterChange(e.target.value || null)}>
-          <option value="">All ({sessions.length})</option>
-          {projects.map(([p, count]) => (
-            <option key={p} value={p}>{p} ({count})</option>
-          ))}
-          {/* a project from the URL that has no session in this range */}
-          {projectFilter && !projects.some(([p]) => p === projectFilter) && (
-            <option value={projectFilter}>{projectFilter} (0)</option>
-          )}
-        </select>
-      </label>
+      <ProjectPicker projects={projects} value={projectFilter} onChange={onProjectFilterChange} allowAll />
       <label className={`scope-select ${filter !== "all" ? "set" : ""}`} title={activeStatus?.tip || undefined}>
         <span className="scope-select-label">Show</span>
         <select value={filter} onChange={(e) => onFilterChange(e.target.value as FilterId)}>

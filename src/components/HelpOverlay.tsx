@@ -7,7 +7,7 @@ interface Props {
 }
 
 const SHORTCUTS: Array<[string, string]> = [
-  ["1 – 4", "Now · Sessions · Usage · Health"],
+  ["1 – 5", "Now · Sessions · Usage · Health · Context"],
   ["↑ / k", "Previous session (while one is open)"],
   ["↓ / j", "Next session (while one is open)"],
   ["Esc", "Close the session / overlay"],
