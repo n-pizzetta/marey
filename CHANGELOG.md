@@ -9,7 +9,7 @@ versioning follows [SemVer](https://semver.org/).
 ### Changed
 
 - Sessions: the page scrolls as a whole, so the headline tiles leave the screen first and the table gets the height; its column header stays on top.
-- Usage and Health: the range and filters head the section they drive (History, Checks) instead of the top of the page, where the current 5h window and the recommendations ignored them. Health loses the headline tiles.
+- Usage and Health: the range and filters head the section they drive (History, Checks), and stay on top while it scrolls, instead of the top of the page, where the current 5h window and the recommendations ignored them. Health loses the headline tiles.
 - The settings menu is easier to read: the usage unit with what it means, one line for the data sources that lists only what needs a look and how to fix it, then the links. Its dot turns amber when a source needs a look.
 - The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
 
