@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Planned
+
+- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
+- Sub-Agent Tree component.
+- Cross-Session Patterns component.
+- Delta vs `~/.claude/usage-data/report.html` view.
+- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
+  `reassignLiveToChainTail`, plugin-cache merge.
+- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
+  macOS/Linux).
+- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
+  with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.9.0] — 2026-10-15
+
 ### Added
 
 - Copilot CLI sessions, as a third provider next to Claude Code and Codex: tokens, API value and the AI credits each session used, prompts, tool calls with failures, sub-agents, and live state on the sessions board (a question or a permission prompt waiting for you, working, your turn).
@@ -26,19 +41,6 @@ versioning follows [SemVer](https://semver.org/).
 ### Removed
 
 - Gamification: the Progress page, badges, levels, XP, streaks and their toasts. It may come back once the rest is mature; `~/.claude/marey/badges.json` is left untouched.
-
-### Planned
-
-- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
-- Sub-Agent Tree component.
-- Cross-Session Patterns component.
-- Delta vs `~/.claude/usage-data/report.html` view.
-- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
-  `reassignLiveToChainTail`, plugin-cache merge.
-- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
-  macOS/Linux).
-- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
-  with mtime invalidation, so cold start doesn't re-parse the full set.
 
 ## [0.8.0] — 2026-10-12
 
