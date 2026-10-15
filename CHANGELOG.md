@@ -6,16 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Context's project is independent of the Sessions project filter: a project filtered on Sessions
-  no longer carries over to Context.
-
-### Fixed
-
-- On Usage and Health, the scope bar no longer shows as a darker band under the header: it sits on
-  the page backdrop like the Sessions bar, and the charts no longer show through it when it sticks.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -28,6 +18,18 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.11.2] — 2026-10-15
+
+### Changed
+
+- Context's project is independent of the Sessions project filter: a project filtered on Sessions
+  no longer carries over to Context.
+
+### Fixed
+
+- On Usage and Health, the scope bar no longer shows as a darker band under the header: it sits on
+  the page backdrop like the Sessions bar, and the charts no longer show through it when it sticks.
 
 ## [0.11.1] — 2026-10-15
 
