@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <strong>The flight recorder for your Claude Code and Codex sessions.</strong><br/>
-  Replay every turn, see where the tokens went, and spot the sessions that went sideways — all from data already on your disk.
+  <strong>The flight recorder for your Claude Code, Codex and Copilot CLI sessions.</strong><br/>
+  See how much of each plan you've used and which running session is using it, replay every turn, and spot the sessions that went sideways — all from data already on your disk.
 </p>
 
 <h3 align="center"><a href="#install"><ins>Install for Claude Code or Codex</ins></a></h3>
@@ -20,9 +20,11 @@
   <img src="./docs/readme/hero.png" alt="The Marey dashboard, with a Claude Code terminal in front showing the context and prompt-cache segment Marey adds to the status line (synthetic demo data)" width="960" />
 </p>
 
-Marey reads the session data Claude Code already writes under `~/.claude/` (and Codex under `~/.codex/`) and turns it into a local dashboard. The data is already there. Nothing visualizes it. This does.
+Marey reads the session data Claude Code already writes under `~/.claude/` (Codex under `~/.codex/`, Copilot CLI under `~/.copilot/`) and turns it into a local dashboard. The data is already there. Nothing visualizes it. This does.
 
 ## Features
+
+**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session, in the colors of the sessions board below, where each running session shows what it needs from you (a question, a permission, your turn) and its share of the limit. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup; Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
 
 <table>
 <tr>
@@ -66,7 +68,7 @@ Running sessions show up in real time with the current tool, context fill and pr
 
 ### Fleet Dashboard
 
-Rankings, health checks and analysis across all your projects: top sessions, model mix, tools heatmap, anomaly flags and the current 5-hour window against your real 5h / 7-day limits.
+Usage and health across all your projects: what is using the current 5-hour window (by project, session and prompt), tokens over time, project league, model mix, tools heatmap, health checks and anomaly flags.
 
 </td>
 <td width="60%">
@@ -99,7 +101,7 @@ Empty sessions and sessions whose Claude Code process died are flagged. Get the 
 </tr>
 </table>
 
-**Codex sessions** from the Codex CLI and IDE extension show up next to Claude Code ones, tagged `codex`, with their tokens, GPT pricing, prompts, commands, patches and timeline. The provider switcher beside the logo shows the detected providers: choose **All providers**, **Claude Code** or **Codex**. The selection is remembered and applies to every page, including Now. Codex's Now view shows today's activity; Claude's quota gauges and badges stay in Claude views and are labelled in the combined view.
+**Codex and Copilot CLI sessions** show up next to Claude Code ones, tagged `codex` or `copilot`, with their tokens, pricing, prompts, tool calls and timeline; Copilot CLI sessions also show the AI credits they used. The provider switcher beside the logo shows the detected providers: choose **All providers** or one of them. The selection is remembered and applies to every page.
 
 <p align="center"><sub>All screenshots use synthetic data from <code>pnpm seed:demo</code>.</sub></p>
 
@@ -139,7 +141,7 @@ If Codex or Copilot CLI is installed, the same command turns on the limits in th
 
 New sessions of either CLI pick it up. `--uninstall` puts both back as they were, unless you changed them since. A plugin update refreshes the Claude Code wrapper on its own, but not these settings: run `/marey:limits` again to get what a new version adds here.
 
-Without it, the dashboard still shows tokens and cost for an inferred 5h window, just not the limit percentages.
+Without it, the dashboard still shows tokens and cost for an inferred 5h window, just not Claude's limit percentages. Codex's and Copilot CLI's limits don't need it: the dashboard reads them from their session files.
 
 </details>
 
@@ -165,7 +167,7 @@ Marey was called ccblackbox. The plugin id changed, so Claude Code won't update 
 /marey:limits
 ```
 
-Your data moves on its own: the first run moves `~/.claude/ccblackbox/` (XP, badges, limits history, tool cache, model overrides) to `~/.claude/marey/` and leaves a link at the old path, so nothing breaks in between. `/marey:limits` points your status line at the new folder; your previous status line is kept. Dashboard settings saved in the browser carry over too.
+Your data moves on its own: the first run moves `~/.claude/ccblackbox/` (limits history, tool cache, model overrides) to `~/.claude/marey/` and leaves a link at the old path, so nothing breaks in between. `/marey:limits` points your status line at the new folder; your previous status line is kept. Dashboard settings saved in the browser carry over too.
 
 ### As a Codex plugin
 
@@ -217,12 +219,13 @@ Marey reads (from `~/.claude`, or `$CLAUDE_CONFIG_DIR` when set):
 | Versioned snapshots of files edited via Claude Code | `~/.claude/file-history/` |
 | Live session state | `~/.claude/sessions/` |
 | Codex rollouts and thread names (or under `$CODEX_HOME` when set) | `~/.codex/sessions/`, `~/.codex/archived_sessions/`, `~/.codex/session_index.jsonl` |
+| Copilot CLI sessions, open sessions and the monthly quota (or under `$COPILOT_HOME` when set) | `~/.copilot/session-state/*/events.jsonl` and `workspace.yaml`, `~/.copilot/open-sessions-state.json` |
 
 The server only listens on `127.0.0.1` and refuses state-changing requests from other websites. The optional `pnpm parse` dump is written to `~/.claude/marey/sessions.json`, never inside the repo.
 
 ## Pricing
 
-Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model.
+Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). Copilot CLI sessions are priced the same way, plus the AI credits Copilot CLI logged for each request, which is what its monthly quota counts. The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model.
 
 A model missing from the table still gets a readable name and is priced like the latest model of its family. Costs that include it are marked `~` in the dashboard. To fix one without waiting for a release, add it to `~/.claude/marey/models.json` (prices in USD per million tokens; picked up on the next refresh):
 
@@ -243,17 +246,17 @@ pnpm dev          # Vite dev server with live re-parse on ~/.claude changes
 pnpm lint         # ESLint
 pnpm typecheck    # tsc
 pnpm build        # typecheck + build → dist/ (committed: the plugin ships it prebuilt)
-pnpm test         # node --test (parser)
+pnpm test         # node --test (parsers, limits, installers)
 pnpm parse        # one-shot dump of every session to ~/.claude/marey/sessions.json
 ```
 
 The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): it runs the parser in-process, keeps sessions in memory and re-parses when `~/.claude/` changes (unchanged transcripts are cached). The front-end fetches a lightweight list (`/api/sessions`) and loads each session's detail on demand (`/api/sessions/:id`). If the API is unreachable, it falls back to built-in demo data.
 
 ```
-~/.claude/{projects, sessions, usage-data, file-history, history.jsonl}
+~/.claude/{projects, sessions, usage-data, file-history, history.jsonl}, ~/.codex, ~/.copilot
                   │
                   ▼
-     scripts/parse-sessions.mjs      transcripts → sessions (+ scripts/models.mjs pricing)
+     scripts/parse-sessions.mjs      transcripts → sessions (+ codex.mjs, copilot.mjs, models.mjs pricing)
                   │
                   ▼
      scripts/api.mjs                 in-memory cache, re-parse on change, /api/*
@@ -261,10 +264,10 @@ The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): i
                   │
                   ▼ fetch
    React 19 SPA (hash routing)
-   ├─ StatsStrip / SessionList / SessionFilters
-   ├─ SessionDetail (Overview / Timeline / Tools / Tokens / Files)
-   ├─ SessionCompare
-   └─ FleetDashboard (src/components/fleet/)
+   ├─ Now: PlanCard per provider, SessionBoard
+   ├─ Sessions: SessionList / SessionFilters / SessionCompare
+   ├─ Usage and Health (src/components/fleet/)
+   └─ SessionDetail (Overview / Timeline / Tools / Tokens / Files)
 ```
 
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the parser internals, component map and build pipeline.
@@ -277,7 +280,8 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the parser internals, component m
 - Live-session detection uses `ps`, so on Windows running sessions show as crashed. Windows is otherwise untested.
 - *Open terminal* is macOS only. It picks the exact tab in Ghostty 1.3+ only, and not inside tmux, zellij or screen.
 - Test coverage is thin: only the parser has tests (`pnpm test`).
-- Codex sessions have no context-quality score, ghost detection, file-history diffs or `/insights` outcome (Claude Code only). They are kept out of Claude's 5h window, badges and the Claude-specific health rules, and the usage-limits pill shows Claude's limits only.
+- Codex and Copilot CLI sessions have no context-quality score, ghost detection, file-history diffs or `/insights` outcome (Claude Code only), and are kept out of the Claude-specific health rules and recommendations.
+- A session's share of a limit is an estimate: the providers report the % used per account, not per session. Marey splits it by each session's API value in the window (AI credits for Copilot CLI). Codex's and Copilot CLI's limits are as fresh as the last request made with them on this machine.
 
 ---
 

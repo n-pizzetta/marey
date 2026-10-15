@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Copilot CLI sessions, as a third provider next to Claude Code and Codex: tokens, API value and the AI credits each session used, prompts, tool calls with failures, sub-agents, and live state on the sessions board (a question or a permission prompt waiting for you, working, your turn).
+- Now is about your plans: one card per provider with Claude Code's and Codex's 5h and weekly windows and Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed. Each bar is split by running session, in the colors of the sessions board below, which shows each running session's share of the limit.
+- Codex's and Copilot CLI's limits come from their own session files, with no setup. The top bar shows each provider's fullest window.
+
+### Changed
+
+- The current 5h window breakdown (what used it, by project, session and prompt) moved from the limits pill's panel to the top of Usage, for Codex too. Recommendations leave Now; Health keeps them.
+- The settings button replaces the profile chip.
+
+### Removed
+
+- Gamification: the Progress page, badges, levels, XP, streaks and their toasts. It may come back once the rest is mature; `~/.claude/marey/badges.json` is left untouched.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

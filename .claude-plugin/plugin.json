@@ -1,6 +1,6 @@
 {
   "name": "marey",
-  "description": "Visual debugger and analytics dashboard for Claude Code and Codex sessions. Replay turns, inspect tool calls and file diffs, track tokens/cost, and surface friction patterns across your fleet.",
+  "description": "Dashboard for Claude Code, Codex and Copilot CLI sessions: how much of each plan you have used and which running session uses it, plus replay, tool calls, file diffs and tokens/cost.",
   "version": "0.8.0",
   "author": {
     "name": "Nathan Pizzetta",
