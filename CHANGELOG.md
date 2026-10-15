@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Context's project is independent of the Sessions project filter: a project filtered on Sessions
+  no longer carries over to Context.
+
 ### Fixed
 
 - On Usage and Health, the scope bar no longer shows as a darker band under the header: it sits on
