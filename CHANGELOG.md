@@ -6,19 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- Sessions: the page scrolls as a whole, so the headline tiles leave the screen first and the table gets the height; its column header stays on top.
-- Usage and Health: the range and filters head the section they drive (History, Checks), and stay on top while it scrolls, instead of the top of the page, where the current 5h window and the recommendations ignored them. Health loses the headline tiles.
-- Usage's tokens-over-time chart starts where the usage starts (not at midnight for Today), so the bars no longer sit squeezed on the right.
-- The settings menu is easier to read: the usage unit with what it means, one line for the data sources that lists only what needs a look and how to fix it, then the links. Its dot turns amber when a source needs a look.
-- A Claude Code or Codex session's share of a limit says it is an estimate: those providers report one % per account, so use on the web or another machine is spread over this machine's sessions. The grey rest of their bars is this machine's ended sessions, not use from elsewhere as its tooltip said.
-- The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
-
-### Fixed
-
-- Claude Code sessions are read against their real context window. Transcripts don't say it (Opus 5.5 can run at 1M with no `[1m]` in its id), so a session that peaked under 200k was read against 200k: the session view said "98% of 200k" under a header saying "20% of 1M", and context quality and the Context headroom check were off. The window now comes from the session's status line snapshot, else the latest one of the same model.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -31,6 +18,22 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.9.1] — 2026-10-15
+
+### Changed
+
+- Sessions: the page scrolls as a whole, so the headline tiles leave the screen first and the table gets the height; its column header stays on top.
+- Usage and Health: the range and filters head the section they drive (History, Checks), and stay on top while it scrolls, instead of the top of the page, where the current 5h window and the recommendations ignored them. Health loses the headline tiles.
+- Usage's tokens-over-time chart starts where the usage starts (not at midnight for Today), so the bars no longer sit squeezed on the right.
+- The settings menu is easier to read: the usage unit with what it means, one line for the data sources that lists only what needs a look and how to fix it, then the links. Its dot turns amber when a source needs a look.
+- A Claude Code or Codex session's share of a limit says it is an estimate: those providers report one % per account, so use on the web or another machine is spread over this machine's sessions. The grey rest of their bars is this machine's ended sessions, not use from elsewhere as its tooltip said.
+- The sessions board on Now is back to plain rows: no colored squares. Point at a session to light up its slice in the plan bars and read its share under them, or at a slice to find its session. Slices use muted colors, never the board's blue or green, and two running sessions no longer share one.
+- The README's visuals show the usage-first pages.
+
+### Fixed
+
+- Claude Code sessions are read against their real context window. Transcripts don't say it (Opus 5.5 can run at 1M with no `[1m]` in its id), so a session that peaked under 200k was read against 200k: the session view said "98% of 200k" under a header saying "20% of 1M", and context quality and the Context headroom check were off. The window now comes from the session's status line snapshot, else the latest one of the same model.
 
 ## [0.9.0] — 2026-10-15
 
