@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Context** page (5th tab): what agents have in mind at start and what they left on disk, for one
+  project. A bar of the files every session reads in full (CLAUDE.md, its imports, the memory index)
+  next to the memory files behind the index, green when re-read in the last 7 days; a grid of
+  sessions with what each loaded, the sub-agents it launched and the repo files it wrote, then one
+  row per memory file with what each session did to it; a session view with each sub-agent's brief
+  and what it received (Explore and Plan get no CLAUDE.md or memory; a sub-agent gets its session's
+  copy of the files as loaded at the session's start); a memory file view with its index line next
+  to its own description; and what is still open (untracked files, files written outside the
+  repo, plans, worktrees). It follows the provider switcher: Codex logs no instruction files and
+  encrypts its sub-agents' briefs, Copilot CLI's instruction files are read from its system prompt.
+  Served by `/api/agent-context` (`scripts/agent-context.mjs`).
+- Project picker with search, on Sessions (replacing the plain list) and Context: type to filter,
+  ↑ ↓ and Enter, sessions per provider.
+- Copilot CLI gets its own provider color.
+- Demo data (`pnpm seed:demo`): instruction files loaded at start, a memory folder that grows and
+  is re-read, and an Explore sub-agent.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

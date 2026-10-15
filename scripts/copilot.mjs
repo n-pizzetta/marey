@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { normalizeModel } from "./models.mjs";
 import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, longestRun } from "./transcript-utils.mjs";
+import { briefOf, createContextCollector, instructionBlocksOf } from "./agent-context.mjs";
 
 // Copilot CLI moves ~/.copilot when COPILOT_HOME is set; so do we.
 export const COPILOT = process.env.COPILOT_HOME || join(homedir(), ".copilot");
@@ -36,6 +37,8 @@ const READ = new Set([
   "tool.execution_start",
   "tool.execution_complete",
   "subagent.started",
+  "subagent.completed",
+  "system.message",
   "permission.requested",
   "permission.completed",
   "abort",
@@ -208,6 +211,14 @@ export async function parseCopilotEvents(path) {
   let lastText = null;
   let openTask = false;
   let pendingIn = { bytes: 0, preview: "" };
+  // The Context page: instruction files in each system prompt, files written, and per sub-agent
+  // (by agentId) what it was started with, the brief its task call gave and what its prompt held.
+  const context = createContextCollector();
+  const subStarted = new Map();
+  const subPromptBlocks = new Map();
+  const subCalls = new Map();
+  const subDone = new Map();
+  const taskBriefs = new Map();
 
   const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
   for await (const line of rl) {
@@ -302,7 +313,13 @@ export async function parseCopilotEvents(path) {
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
       }
-      if ((name === "edit" || name === "create") && typeof args.path === "string") files.add(args.path);
+      if ((name === "edit" || name === "create") && typeof args.path === "string") {
+        files.add(args.path);
+        context.write(tsMs, args.path, name, sub ? j.agentId : null);
+      }
+      if (SHELL_TOOLS.has(name) && typeof args.command === "string") context.bash(tsMs, args.command);
+      if (SUBAGENT_TOOLS.has(name) && d.toolCallId && typeof args.prompt === "string") taskBriefs.set(d.toolCallId, args.prompt);
+      if (sub) subCalls.set(j.agentId, (subCalls.get(j.agentId) ?? 0) + 1);
       const { preview, full } = previewOf(name, args);
       const call = { tool: name, tsMs, ask: name === "ask_user" ? preview : null, preview: preview.slice(0, 160) };
       if (d.toolCallId) {
@@ -320,8 +337,17 @@ export async function parseCopilotEvents(path) {
       resultById.set(d.toolCallId, { text: body.slice(0, 240), truncated: body.length > 240, isError: d.success === false, bytes: body.length });
       pendingIn.bytes += body.length;
       if (!pendingIn.preview) pendingIn.preview = `[tool_result] ${body.slice(0, 200)}`;
+    } else if (type === "system.message") {
+      const blocks = instructionBlocksOf((d.contentBlocks ?? []).map((b) => b?.content ?? "").join("\n") || (typeof d.content === "string" ? d.content : ""));
+      if (sub) subPromptBlocks.set(j.agentId, [...(subPromptBlocks.get(j.agentId) ?? []), ...blocks]);
+      else context.instructionBlocks(tsMs, blocks);
     } else if (type === "subagent.started") {
       subAgents++;
+      const id = typeof j.agentId === "string" ? j.agentId : d.toolCallId;
+      if (id) subStarted.set(id, { tsMs, toolCallId: d.toolCallId ?? null, type: d.agentType ?? d.agentName ?? "subagent", name: d.agentDisplayName ?? d.agentName ?? null, description: d.agentDescription ?? null, model: d.model ?? null });
+    } else if (type === "subagent.completed") {
+      const id = typeof j.agentId === "string" ? j.agentId : d.toolCallId;
+      if (id && typeof d.totalToolCalls === "number") subDone.set(id, d.totalToolCalls);
     } else if (type === "permission.requested") {
       const req = d.permissionRequest ?? {};
       openPermissions.set(d.requestId, {
@@ -352,6 +378,23 @@ export async function parseCopilotEvents(path) {
   if (quotaEvent) lastQuotaTs = Date.parse(quotaEvent.timestamp ?? "") || null;
   const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
   const pendingCall = lastCallId && !resultById.has(lastCallId) ? callById.get(lastCallId) : null;
+  const ctx = context.finish();
+  // Explore, research and code-review sub-agents get no instruction file; general-purpose ones do.
+  const subagentContexts = [...subStarted].map(([id, a]) => {
+    const blocks = subPromptBlocks.get(id);
+    return {
+      id,
+      type: a.type,
+      name: a.name,
+      description: a.description,
+      model: a.model,
+      tsMs: a.tsMs,
+      ...briefOf(taskBriefs.get(a.toolCallId)),
+      received: !blocks ? "unrecorded" : blocks.length ? blocks.map((b) => ({ path: null, label: b.heading, type: "Copilot", hash: b.hash })) : "none",
+      toolCalls: subDone.get(id) ?? subCalls.get(id) ?? 0,
+      writes: ctx.writes.filter((w) => w.by === id).map((w) => w.path),
+    };
+  });
   return {
     longestRunMs: longestRun([...turns.filter((tu) => !tu.sidechain).map((tu) => tu.tsMs), ...prompts.map((p) => p.tsMs)]),
     tokens,
@@ -387,6 +430,8 @@ export async function parseCopilotEvents(path) {
     lastCall: lastCallId ? callById.get(lastCallId) : null,
     lastText,
     quota: quotaEvent ? quotaOf(quotaEvent.data?.quotaSnapshots, lastQuotaTs) : null,
+    context: ctx,
+    subagentContexts,
   };
 }
 

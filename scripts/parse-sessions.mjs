@@ -32,6 +32,7 @@ import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModel
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
+import { briefOf, createContextCollector } from "./agent-context.mjs";
 
 // `pnpm parse` dump. Never under public/ or dist/: it holds real prompts and paths.
 // Claude Code moves ~/.claude when CLAUDE_CONFIG_DIR is set; so do we.
@@ -344,6 +345,9 @@ async function parseTranscriptFile(path, sidechain) {
   // Sub-agent transcripts: their own id and the instructions they were given (their first user message).
   let agentId = null;
   let subPrompt = null;
+  let subBrief = null;
+  // What the Context page shows: instruction files loaded, memory read and written, files written.
+  const context = createContextCollector();
   let userMessages = 0;
   let commits = 0;
   const shell = { prs: 0, tests: 0, lints: 0, infra: 0 };
@@ -370,6 +374,10 @@ async function parseTranscriptFile(path, sidechain) {
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
     if (!customTitle && j.type === "custom-title" && typeof j.customTitle === "string") {
       customTitle = j.customTitle;
+    }
+    if (j.type === "attachment") {
+      if (j.attachment?.type === "instructions") context.instructions(j.timestamp ? new Date(j.timestamp).getTime() : null, j.attachment.files);
+      else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
     }
     const msg = j.message;
     if (!msg) continue;
@@ -437,7 +445,11 @@ async function parseTranscriptFile(path, sidechain) {
           commits++;
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
-        if (c.name === "Bash" && typeof input.command === "string") countShellKinds(input.command, shell);
+        if (c.name === "Bash" && typeof input.command === "string") {
+          countShellKinds(input.command, shell);
+          context.bash(tsMs, input.command);
+        }
+        context.file(tsMs, c.name, typeof input.file_path === "string" ? input.file_path : input.notebook_path);
         if (typeof input.file_path === "string") {
           const hash = createHash("sha256").update(input.file_path).digest("hex").slice(0, 16);
           if (!pathByHash.has(hash)) pathByHash.set(hash, input.file_path);
@@ -499,7 +511,10 @@ async function parseTranscriptFile(path, sidechain) {
       // Sub-agent transcripts start with the parent's instructions, not a user prompt.
       if (sidechain || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
-        if (sidechain && text && subPrompt === null) subPrompt = text.slice(0, 1500);
+        if (sidechain && text && subPrompt === null) {
+          subPrompt = text.slice(0, 1500);
+          subBrief = briefOf(text);
+        }
         continue;
       }
       userMessages++;
@@ -559,7 +574,8 @@ async function parseTranscriptFile(path, sidechain) {
     pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
     lastCall: lastCallId ? callById.get(lastCallId) : null,
     quality: quality?.finish(turns) ?? null,
-    ...(sidechain ? { agentId, subPrompt } : {}),
+    context: context.finish(),
+    ...(sidechain ? { agentId, subPrompt, subBrief } : {}),
   };
 }
 
@@ -709,6 +725,10 @@ async function readSubagents(entry, sessionId) {
     const label = [meta?.agentType, meta?.description].filter((s) => typeof s === "string" && s).join(" · ");
     out.push({
       ...t,
+      agentType: typeof meta?.agentType === "string" ? meta.agentType : null,
+      agentName: typeof meta?.name === "string" ? meta.name : null,
+      description: typeof meta?.description === "string" ? meta.description : null,
+      subModel: typeof meta?.model === "string" ? meta.model : null,
       agentId: t.agentId ?? (/^agent-(.+)\.jsonl$/.exec(f)?.[1] ?? null),
       ...(label ? { label } : {}),
     });
@@ -757,6 +777,49 @@ function satisfactionOf(facet) {
  */
 /** A Codex sub-agent rollout merged into its parent, like a Claude subagents/ transcript. */
 const asSidechain = (t) => ({ ...t, turns: t.turns.map((tu) => ({ ...tu, sidechain: true })) });
+
+const callCount = (counts) => Object.values(counts ?? {}).reduce((a, b) => a + b, 0);
+
+/**
+ * What the Context page needs from a session (scripts/agent-context.mjs): the instruction files it
+ * loaded, its memory reads and writes and the files it wrote, sub-agents included, and what each
+ * sub-agent received. A Claude sub-agent gets its session's copy of the instruction files; Explore
+ * and Plan get none (logged prompt, no files); a Codex sub-agent's brief is encrypted.
+ */
+function agentContextOf(agent, t, subs) {
+  if (!t?.context) return null;
+  const subagents = agent === "copilot"
+    ? (t.subagentContexts ?? [])
+    : subs.map((sub) => {
+      const c = sub.context ?? { loads: [], memoryOps: [], writes: [], snapshot: false };
+      const type = agent === "codex" ? "subagent" : sub.agentType ?? "unknown";
+      const fork = agent === "codex" && (t.spawns ?? []).some((sp) => sp.fork && sub.spawn?.task?.endsWith(`/${sp.task}`));
+      const received = agent === "codex" ? (fork ? "conversation" : "builtin")
+        : type === "fork" ? "conversation"
+        : c.loads.length ? (c.loads[0].files ?? []).map((f) => ({ path: f.path, type: f.type }))
+        : c.snapshot ? "none" : "unrecorded";
+      return {
+        id: sub.agentId ?? null,
+        type,
+        name: sub.agentName ?? sub.spawn?.name ?? null,
+        description: sub.description ?? sub.spawn?.task ?? null,
+        model: sub.subModel ?? sub.model ?? null,
+        tsMs: sub.firstTs ?? null,
+        ...(agent === "codex" ? { brief: null, briefChars: 0, briefHidden: true } : sub.subBrief ?? { brief: null, briefChars: 0 }),
+        received,
+        toolCalls: callCount(sub.toolCounts),
+        writes: c.writes.map((w) => w.path),
+      };
+    });
+  const c = t.context;
+  return {
+    loads: c.loads,
+    snapshot: c.snapshot,
+    memoryOps: [...c.memoryOps, ...subs.flatMap((sub) => (sub.context?.memoryOps ?? []).map((o) => ({ ...o, by: sub.agentId ?? "subagent" })))],
+    writes: [...c.writes, ...subs.flatMap((sub) => sub.context?.writes ?? [])],
+    subagents,
+  };
+}
 
 async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [] }) {
   const agent = entry?.agent ?? "claude";
@@ -838,6 +901,8 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
     ...(agent === "copilot" ? { aiCredits: t?.aiCredits ?? null } : {}),
     fileHistory,
+    // Detail payload only, read by /api/agent-context.
+    agentContext: agentContextOf(agent, t, subs),
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
     toolSequence: nestSubagentCalls(
