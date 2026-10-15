@@ -51,7 +51,7 @@ interface PersistedState {
   filter: FilterId;
   provider: Provider;
   project: string | null;
-  /** The project shown on Context: its own choice, so it never filters the other pages. */
+  /** The project shown on Context: its own choice, independent of the project filter. */
   contextProject: string | null;
   search: string;
 }
@@ -173,12 +173,6 @@ function App() {
   const changeFilter = (f: FilterId) => {
     setFilter(f);
     if (f !== "ghost") setCompareIds((prev) => (prev.size > MAX_COMPARE ? new Set([...prev].slice(0, MAX_COMPARE)) : prev));
-  };
-
-  /** Context follows a project picked as a filter; a project picked on Context filters nothing. */
-  const changeProjectFilter = (p: string | null) => {
-    setProjectFilter(p);
-    if (p) setContextProject(p);
   };
 
   const resetFilters = () => {
@@ -361,7 +355,7 @@ function App() {
       filter={filter}
       onFilterChange={changeFilter}
       projectFilter={projectFilter}
-      onProjectFilterChange={changeProjectFilter}
+      onProjectFilterChange={setProjectFilter}
       search={search}
       onSearchChange={setSearch}
       inRange={inRange}
@@ -423,7 +417,7 @@ function App() {
             onSelect={setSelectedId}
             sort={sort}
             onSortChange={setSort}
-            onProjectClick={(p) => changeProjectFilter(projectFilter === p ? null : p)}
+            onProjectClick={(p) => setProjectFilter((cur) => (cur === p ? null : p))}
             compareMode={compareMode}
             onToggleCompareMode={() => {
               setCompareMode((v) => {
@@ -484,7 +478,7 @@ function App() {
           <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} scopeBar={scopeBar} onSelectSession={setSelectedId} />
         )}
         {page === "context" && (
-          <ContextPage allSessions={allSessions} provider={provider} project={contextProject ?? projectFilter} onProjectChange={setContextProject} generatedAt={generatedAt} />
+          <ContextPage allSessions={allSessions} provider={provider} project={contextProject} onProjectChange={setContextProject} generatedAt={generatedAt} />
         )}
       </main>
       {showClaude && analysisSpike && (
