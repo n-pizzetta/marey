@@ -6,7 +6,7 @@ import { toastError } from "./toast";
 const IS_MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
 
 /** A running Claude Code session whose terminal the dashboard can bring to the front. */
-export const canOpenTerminal = (s: Session) => IS_MAC && !!s.live && s.agent !== "codex";
+export const canOpenTerminal = (s: Session) => IS_MAC && !!s.live && (s.agent ?? "claude") === "claude";
 
 /** Brings the session's terminal to the front; toasts why when it fails or can't pick the exact tab. */
 export async function openTerminal(id: string): Promise<boolean> {

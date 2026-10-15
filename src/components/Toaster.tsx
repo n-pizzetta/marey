@@ -5,7 +5,7 @@ import { useDocumentVisible } from "../utils/visibility";
 type Toast = ToastDetail & { id: number };
 
 let nextId = 1;
-const LIFETIME_MS = { error: 6000, achievement: 8000 };
+const LIFETIME_MS = 6000;
 
 /** The live region stays mounted so screen readers announce the first toast too. */
 export function Toaster() {
@@ -32,7 +32,7 @@ export function Toaster() {
 function ToastItem({ toast: t, onDismiss }: { toast: Toast; onDismiss: (id: number) => void }) {
   const [held, setHeld] = useState(false);
   const visible = useDocumentVisible();
-  const remaining = useRef(LIFETIME_MS[t.kind]);
+  const remaining = useRef(LIFETIME_MS);
   useEffect(() => {
     if (held || !visible) return;
     const start = Date.now();
@@ -51,32 +51,9 @@ function ToastItem({ toast: t, onDismiss }: { toast: Toast; onDismiss: (id: numb
   };
   const close = <button className="toast-close" aria-label="Dismiss" onClick={() => onDismiss(t.id)}>✕</button>;
 
-  if (t.kind === "error") {
-    return (
-      <div className="toast" {...hold}>
-        <span>{t.message}</span>
-        {close}
-      </div>
-    );
-  }
   return (
-    <div className={`toast achievement tone-${t.tone}`} {...hold}>
-      <span className="toast-icon" aria-hidden="true">{t.icon}</span>
-      <span className="toast-body">
-        <span className="toast-title">{t.title}</span>
-        {t.sub && <span className="toast-sub mono">{t.sub}</span>}
-      </span>
-      {t.action && (
-        <button
-          className="link-btn toast-action"
-          onClick={() => {
-            t.action!.run();
-            onDismiss(t.id);
-          }}
-        >
-          {t.action.label}
-        </button>
-      )}
+    <div className="toast" {...hold}>
+      <span>{t.message}</span>
       {close}
     </div>
   );

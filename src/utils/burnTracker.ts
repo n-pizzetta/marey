@@ -72,7 +72,7 @@ export function useBurnTracker(sessions: Session[], limits: RateLimits | null): 
   const limitsRef = useRef(limits);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
   useEffect(() => { limitsRef.current = limits; }, [limits]);
-  const enabled = !!limits?.fiveHour;
+  const enabled = !!limits?.claude?.fiveHour;
 
   const [buffer, setBuffer] = useState<Sample[]>([]);
   const [dismissal, setDismissal] = useState<Dismissal | null>(null);
@@ -82,11 +82,12 @@ export function useBurnTracker(sessions: Session[], limits: RateLimits | null): 
     const id = setInterval(() => {
       const now = Date.now();
       const l = limitsRef.current;
-      if (!l?.fiveHour) return;
+      const five = l?.claude?.fiveHour;
+      if (!five) return;
       const burn = tokensIn5h(sessionsRef.current, now, windowStartFrom(l));
       const sample: Sample = {
         ts: now,
-        fillPct: l.fiveHour.usedPct / 100,
+        fillPct: five.usedPct / 100,
         tokens5h: sumTokens(burn.tokens),
         cost5h: burn.cost,
       };

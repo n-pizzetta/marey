@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import type { Session } from "../../types";
 import type { Range } from "../../utils/range";
 import { projectColor } from "../../utils/fleetStats";
-import { projectLeague, type ProjectRow } from "../../utils/gamify";
+import { projectLeague, type ProjectRow } from "../../utils/projectLeague";
+import "../../league.css";
 import { formatCost, formatTokens } from "../../utils/format";
 import { useUnit } from "../../utils/units";
 

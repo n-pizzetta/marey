@@ -1,0 +1,102 @@
+/* Plan usage cards (components/PlanCard.tsx): each provider's windows, split by running session */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 14px;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 20px 16px;
+  background: var(--c-bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+
+.plan-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plan-head h3 { margin: 0; font-size: var(--fs-body); font-weight: 650; color: var(--c-text); }
+.plan-head .provider-dot { width: 8px; height: 8px; }
+.plan-tier {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--c-hairline-strong);
+  font-size: var(--fs-sm);
+  color: var(--c-text-dim);
+  text-transform: capitalize;
+}
+.plan-source { margin-left: auto; font-size: var(--fs-sm); color: var(--c-text-faint); white-space: nowrap; }
+
+.plan-meter { display: flex; flex-direction: column; gap: 8px; }
+.plan-meter-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.plan-meter-label { font-size: var(--fs-base); color: var(--c-text-soft); }
+.plan-meter-pct { font-size: var(--fs-xl); font-weight: 650; letter-spacing: -0.02em; line-height: 1; }
+.plan-meter-pct.off { font-size: var(--fs-md); font-weight: 400; letter-spacing: 0; color: var(--c-text-faint); }
+.plan-meter-count { font-size: var(--fs-md); color: var(--c-text-dim); }
+.plan-meter-reset { margin-left: auto; font-size: var(--fs-md); color: var(--c-text-dim); white-space: nowrap; }
+
+.plan-bar {
+  position: relative;
+  display: flex;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+.plan-bar > :first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+.plan-bar-seg {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  padding: 0;
+  border: 0;
+  box-shadow: inset -1.5px 0 0 var(--c-bg-panel);
+  cursor: pointer;
+  transition: width var(--t-slow), filter var(--t-fast);
+}
+.plan-bar-seg:hover, .plan-bar-seg:focus-visible { filter: brightness(1.25); outline: none; }
+.plan-bar-rest { display: block; height: 100%; opacity: 0.32; transition: width var(--t-slow); }
+.plan-meter.unknown .plan-bar-rest {
+  opacity: 1;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 4px, transparent 4px 8px);
+}
+/* tick: share of the window already elapsed; a fill past it runs faster than time */
+.plan-bar-pace {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--c-text);
+  opacity: 0.55;
+  border-radius: 1px;
+  pointer-events: auto;
+}
+
+.plan-meter-note { font-size: var(--fs-md); color: var(--c-text-dim); }
+.plan-meter-note b { font-weight: 600; color: var(--c-text-soft); }
+.plan-ahead { color: var(--c-amber); }
+
+.plan-hint { margin: -6px 0 0; font-size: var(--fs-md); color: var(--c-text-dim); line-height: 1.5; }
+.plan-hint code { font-family: var(--f-mono); color: var(--c-text-soft); }
+
+.plan-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-hairline);
+  font-size: var(--fs-md);
+  color: var(--c-text-soft);
+}
+.plan-foot-label { color: var(--c-text-faint); }
+.plan-details { margin-left: auto; }
+
+/* Usage of a running session on the sessions board: its color, then its share of the plan */
+.board-usage { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; justify-self: end; }
+.board-usage-pct { font-size: var(--fs-base); font-weight: 600; color: var(--c-text); }
+.board-usage-of { font-size: var(--fs-sm); color: var(--c-text-faint); }
+.board-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; align-self: center; }

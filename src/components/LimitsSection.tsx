@@ -1,33 +1,38 @@
+import type { Agent } from "../types";
 import { useRateLimits } from "../utils/rateLimits";
 import { useLiveContext } from "../utils/liveContext";
+import { PROVIDER_LABELS } from "../utils/providers";
 
-/** Status row for the usage limits bridge, plus a one-line fix when something is missing. */
-export function LimitsSection() {
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** Where each provider's plan usage comes from, plus a one-line fix when something is missing. */
+export function LimitsSection({ providers }: { providers: Agent[] }) {
   const limits = useRateLimits();
-  const connected = !!limits?.fiveHour || !!limits?.sevenDay;
   const contextLive = useLiveContext().length > 0;
+  const claude = limits?.claude;
+  const claudeOn = !!claude?.fiveHour || !!claude?.sevenDay;
   return (
     <>
-      <div className="profile-row">
-        <span className="profile-row-label">Claude Code limits</span>
-        {connected ? (
-          <span className="profile-row-value mono">
-            <span className="profile-dot ok" aria-hidden="true" />
-            {limits?.capturedAt ? "synced " + new Date(limits.capturedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "connected"}
-          </span>
-        ) : (
-          <span className="profile-row-value mono">
-            <span className="profile-dot off" aria-hidden="true" />
-            off
-          </span>
-        )}
-      </div>
-      {!connected && (
+      {providers.map((p) => {
+        const l = limits?.[p];
+        const on = p === "claude" ? claudeOn : !!l;
+        const value = !on ? "off" : p === "claude" ? (l?.capturedAt ? `synced ${clock(l.capturedAt)}` : "connected") : l?.capturedAt ? `from its sessions · ${clock(l.capturedAt)}` : "from its sessions";
+        return (
+          <div key={p} className="profile-row">
+            <span className="profile-row-label">{PROVIDER_LABELS[p]} {p === "copilot" ? "quota" : "limits"}</span>
+            <span className="profile-row-value mono">
+              <span className={`profile-dot ${on ? "ok" : "off"}`} aria-hidden="true" />
+              {value}
+            </span>
+          </div>
+        );
+      })}
+      {providers.includes("claude") && !claudeOn && (
         <p className="profile-hint">
           Run <code>/marey:limits</code> in Claude Code to show your real 5h and 7-day limits.
         </p>
       )}
-      {connected && !contextLive && (
+      {claudeOn && !contextLive && (
         <p className="profile-hint">
           Context advice is waiting: re-run <code>/marey:limits</code>, then send a message.
         </p>

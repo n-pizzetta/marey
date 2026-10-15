@@ -1,0 +1,38 @@
+/* Project league (Usage page): projects ranked by API value, with their movement. */
+.league { display: flex; flex-direction: column; gap: 4px; }
+.league-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 6px;
+  border-radius: var(--radius-md);
+}
+.league-row.leader { background: color-mix(in srgb, #f5c451 7%, transparent); }
+.league-rank { text-align: center; font-size: var(--fs-lg); color: var(--c-text-dim); }
+.league-main { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.league-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.league-name { font-size: var(--fs-base); color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.league-count { font-size: var(--fs-xs); white-space: nowrap; }
+.league-move { margin-left: auto; font-size: var(--fs-sm); font-family: var(--f-mono); white-space: nowrap; }
+.league-move.up { color: var(--c-green); }
+.league-move.down { color: var(--c-red); }
+.league-move.flat { color: var(--c-text-ghost); }
+.league-move.new { color: var(--c-cyan); }
+.league-bar { height: 6px; background: var(--c-hairline); border-radius: 999px; overflow: hidden; }
+.league-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transform-origin: left;
+  animation: grow-x 650ms var(--t-slow) both;
+}
+.league-nums { display: flex; flex-direction: column; align-items: flex-end; font-size: var(--fs-md); }
+
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .league-bar > span { animation: none; }
+}

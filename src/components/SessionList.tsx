@@ -269,6 +269,9 @@ export function SessionList({
                       {s.agent === "codex" && (
                         <span className="agent-tag" title="Codex session (~/.codex)">codex</span>
                       )}
+                      {s.agent === "copilot" && (
+                        <span className="agent-tag" title="Copilot CLI session (~/.copilot)">copilot</span>
+                      )}
                       {s.frictions.length > 0 && (
                         <span className="friction-chip" title={`${s.frictions.length} friction point${s.frictions.length > 1 ? "s" : ""} (/insights)`}>
                           △<span className="tabular">{s.frictions.length}</span>

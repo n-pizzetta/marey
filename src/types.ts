@@ -2,8 +2,8 @@ export type Outcome = "fully_achieved" | "mostly_achieved" | "partially_achieved
 
 export type GhostKind = "empty" | "crashed";
 
-/** Coding agent that wrote the session: Claude Code (~/.claude) or Codex (~/.codex). */
-export type Agent = "claude" | "codex";
+/** Coding agent that wrote the session: Claude Code (~/.claude), Codex (~/.codex) or Copilot CLI (~/.copilot). */
+export type Agent = "claude" | "codex" | "copilot";
 
 export type FrictionKind =
   | "wrong_approach"
@@ -113,7 +113,7 @@ export interface Session {
   subAgents: number;
   filesChanged: number;
   commits: number;
-  /** Bash commands by kind (main thread only); detail payload only, used for badges. */
+  /** Bash commands by kind (main thread only); detail payload only. */
   shell?: { prs: number; tests: number; lints: number; infra: number };
   live?: boolean;
   ghost?: boolean;
@@ -123,8 +123,10 @@ export interface Session {
   lastEventAt?: string;
   /** Claude Code or Codex CLI version from the transcript (last seen). */
   version?: string;
-  /** Context window reported by the agent (Codex only); else inferred from the peak. */
+  /** Context window reported by the agent (Codex, Copilot CLI); else inferred from the peak. */
   contextWindow?: number;
+  /** Copilot CLI: AI credits the session used (what its monthly quota counts); null when the CLI didn't log them. */
+  aiCredits?: number | null;
   /** Running sessions: when the Claude Code process started (pid file). */
   processStartedAt?: string;
   runningTool?: { tool: string; preview: string; t: number } | null;
@@ -159,6 +161,8 @@ export interface Session {
       cacheWrite1h?: number;
     };
     tools: string[];
+    /** Copilot CLI: the call's price in AI credits. */
+    credits?: number;
     promptIdx?: number;
     inBytes?: number;
     outBytes?: number;

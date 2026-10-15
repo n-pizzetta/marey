@@ -24,7 +24,8 @@
 .board-group li { border-top: 1px solid var(--c-hairline); }
 .board-row {
   display: grid;
-  grid-template-columns: minmax(120px, 180px) minmax(90px, 150px) 1fr auto auto;
+  /* each row is its own grid: fixed tracks keep columns aligned when a row has no usage or button */
+  grid-template-columns: minmax(120px, 190px) minmax(90px, 170px) minmax(0, 1fr) 104px 56px 112px;
   align-items: baseline;
   gap: 14px;
   padding: 9px 12px;
@@ -32,12 +33,15 @@
   cursor: pointer;
 }
 .board-row:hover, .board-row:focus-visible { background: var(--c-bg-hover); outline: none; }
-.board-name { font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: 600; color: var(--c-text); }
+.board-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-provider { color: var(--c-text-faint); }
 .board-project { font-size: var(--fs-sm); color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-line { font-size: var(--fs-base); color: var(--c-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .board-needs-you .board-line { color: var(--c-text); }
-.board-since { font-size: var(--fs-md); color: var(--board-tone); white-space: nowrap; }
+.board-since { justify-self: end; font-size: var(--fs-md); color: var(--board-tone); white-space: nowrap; }
 .board-open {
+  justify-self: end;
   font-size: var(--fs-sm);
   padding: 3px 10px;
   border-radius: 999px;
@@ -53,38 +57,6 @@
   .board-since { grid-column: 2; grid-row: 1; }
   .board-project { grid-column: 1 / -1; }
   .board-line { grid-column: 1 / -1; white-space: normal; }
+  .board-usage { grid-column: 1 / -1; justify-self: start; }
   .board-open { grid-column: 1 / -1; justify-self: start; margin-top: 4px; }
-}
-
-/* 5h window menu (components/WindowMenu.tsx): a panel out of the limits pill, like a menu bar item */
-.window-menu { position: relative; align-self: center; }
-.window-menu.open .limits-pill.clickable { background: var(--c-bg-hover); }
-.window-pop {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: -10px;
-  z-index: 70;
-  width: min(620px, calc(100vw - 32px));
-  max-height: calc(100vh - 96px);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px 18px;
-  background: var(--c-bg-panel);
-  border: 1px solid var(--c-hairline-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-  transform-origin: top right;
-  animation: window-pop-in 140ms ease-out;
-}
-@keyframes window-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
-/* the panel is the card: the 5h block inside drops its own (.page gives it the page's panel styles) */
-.window-pop.page { gap: 12px; }
-.window-pop.page .five-hour-session { padding: 0; background: none; box-shadow: none; border-radius: 0; }
-.window-pop.page .consumers-lists { grid-template-columns: minmax(0, 1fr); }
-.window-pop-foot { display: flex; padding-top: 10px; border-top: 1px solid var(--c-hairline); }
-.window-pop-foot .live-burn { margin-left: 0; }
-@media (max-width: 720px) {
-  .window-pop { position: fixed; top: 112px; left: 12px; right: 12px; width: auto; }
 }
