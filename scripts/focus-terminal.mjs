@@ -6,11 +6,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { platform } from "node:os";
-import { constants, createReadStream } from "node:fs";
+import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import { jsonlLines } from "./transcript-utils.mjs";
 
 const run = promisify(execFile);
 
@@ -57,8 +57,7 @@ export async function sessionTitles(transcriptPath) {
   let custom = null;
   let ai = null;
   if (!transcriptPath) return [];
-  const rl = createInterface({ input: createReadStream(transcriptPath, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(transcriptPath)) {
     if (!line.includes('"custom-title"') && !line.includes('"ai-title"')) continue;
     try {
       const j = JSON.parse(line);

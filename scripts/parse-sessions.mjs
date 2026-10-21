@@ -8,8 +8,7 @@
  * Claude Code's files. See ARCHITECTURE.md.
  */
 import { readdir, readFile, writeFile, mkdir, open, rm, stat as fspStat } from "node:fs/promises";
-import { existsSync, createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,6 +22,7 @@ import {
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
+  jsonlLines,
   longestRun,
   own,
   toolKey,
@@ -243,9 +243,7 @@ async function readCaptureFile(file, startedAtMs) {
   let lastTsMs = 0;
   let stopTsMs = 0;
   try {
-    const stream = createReadStream(file, { encoding: "utf8" });
-    const rl = createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of rl) {
+    for await (const line of jsonlLines(file)) {
       if (!line.trim()) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
@@ -304,8 +302,7 @@ function mergeToolSequences(transcriptSeq, pluginSeq) {
 async function readHistoryBySession() {
   const bySession = new Map();
   if (!existsSync(HISTORY)) return bySession;
-  const rl = createInterface({ input: createReadStream(HISTORY, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(HISTORY)) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
@@ -823,18 +820,14 @@ export function claudePids(pids) {
 async function readCustomTitleFast(path) {
   // Scan first ~20 lines for a custom-title entry (cheap — don't load whole file).
   if (!existsSync(path)) return null;
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
   let i = 0;
-  for await (const line of rl) {
+  for await (const line of jsonlLines(path)) {
     i++;
     if (i > 50) break;
     if (!line.trim()) continue;
     try {
       const j = JSON.parse(line);
-      if (j.type === "custom-title" && typeof j.customTitle === "string") {
-        rl.close();
-        return j.customTitle;
-      }
+      if (j.type === "custom-title" && typeof j.customTitle === "string") return j.customTitle;
     } catch { /* skip */ }
   }
   return null;

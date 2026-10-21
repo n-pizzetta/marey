@@ -16,7 +16,7 @@ versioning follows [SemVer](https://semver.org/).
 ### Fixed
 
 - The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.
-- Claude Code transcript lines that hold the characters U+2028 or U+2029 were skipped, with their tokens, calls and results.
+- Lines that hold the characters U+2028 or U+2029 were skipped in Claude Code transcripts, Codex rollouts, Copilot CLI sessions and the plugin hook's captures, with their tokens, calls and results.
 
 ### Planned
 

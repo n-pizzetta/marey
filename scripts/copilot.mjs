@@ -6,13 +6,11 @@
  * with each model call. Read-only. See ARCHITECTURE.md.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { normalizeModel } from "./models.mjs";
-import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, longestRun } from "./transcript-utils.mjs";
+import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, jsonlLines, longestRun } from "./transcript-utils.mjs";
 import { briefOf, createContextCollector, instructionBlocksOf } from "./agent-context.mjs";
 
 // Copilot CLI moves ~/.copilot when COPILOT_HOME is set; so do we.
@@ -220,8 +218,7 @@ export async function parseCopilotEvents(path) {
   const subDone = new Map();
   const taskBriefs = new Map();
 
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(path)) {
     const type = line.match(TYPE_RE)?.[1];
     if (!type) continue;
     if (type === QUOTA_EVENT) {
