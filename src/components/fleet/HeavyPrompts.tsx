@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Session } from "../../types";
 import { aggregateByPrompt, type PromptStats } from "../../utils/aggregateByPrompt";
+import { cacheHit, inputTokens } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
 
 interface Props {
@@ -14,10 +15,9 @@ function formatClockFrom(startedAt: string, t: number): string {
   return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
 }
 
-function cacheHit(t: PromptStats["tokens"]): number | null {
-  const pool = t.input + t.cacheRead;
-  if (pool < 5_000) return null;
-  return t.cacheRead / pool;
+function promptHit(t: PromptStats["tokens"]): number | null {
+  if (inputTokens(t) < 5_000) return null;
+  return cacheHit(t);
 }
 
 function hitColor(hit: number): string {
@@ -68,7 +68,7 @@ export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
         </div>
         {top.map((r, i) => {
           const p = r.session.prompts?.[r.stat.promptIdx];
-          const hit = cacheHit(r.stat.tokens);
+          const hit = promptHit(r.stat.tokens);
           return (
             <button
               key={`${r.session.id}-${r.stat.promptIdx}`}
@@ -84,7 +84,7 @@ export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
               <span
                 className="mono tabular right"
                 style={{ color: hit !== null ? hitColor(hit) : "var(--c-text-faint)" }}
-                title={hit !== null ? `cacheRead / (cacheRead + input) = ${formatTokens(r.stat.tokens.cacheRead)} / ${formatTokens(r.stat.tokens.cacheRead + r.stat.tokens.input)}` : "not enough input data"}
+                title={hit !== null ? `cacheRead / (input + cacheRead + cacheWrite) = ${formatTokens(r.stat.tokens.cacheRead)} / ${formatTokens(inputTokens(r.stat.tokens))}` : "not enough input data"}
               >
                 {hit !== null ? `${(hit * 100).toFixed(0)}%` : "—"}
               </span>

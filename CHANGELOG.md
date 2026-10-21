@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The cache hit of Claude Code and Copilot CLI sessions read about 100%: it now counts cache writes, input read fresh to fill the cache, as misses.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

@@ -6,7 +6,7 @@ import { FrictionsCard, SessionKpis, TabPreviews, type OverviewLink } from "./Se
 import { KpiRow } from "./Kpi";
 import { freshTokens, useUnit, type Unit } from "../utils/units";
 import { promptWeights } from "../utils/promptShare";
-import { projectColor } from "../utils/fleetStats";
+import { cacheHit, inputTokens, projectColor } from "../utils/fleetStats";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPatch } from "diff";
 import type { Session, SessionQuality, ToolCall, ToolName } from "../types";
@@ -1099,9 +1099,7 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
   const savings = Math.max(0, baseline - totalCost);
   const savingsPct = baseline > 0 ? (savings / baseline) * 100 : 0;
 
-  const cacheHit = session.tokens.input + session.tokens.cacheRead > 0
-    ? session.tokens.cacheRead / (session.tokens.input + session.tokens.cacheRead)
-    : 0;
+  const hit = cacheHit(session.tokens);
   const promptCount = session.prompts?.length ?? 0;
   const costPerPrompt = promptCount > 0 ? totalCost / promptCount : 0;
 
@@ -1114,7 +1112,7 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
   ];
 
   const pct = (v: number, t: number) => (t > 0 ? (v / t) * 100 : 0);
-  const hitTone = cacheHit >= 0.9 ? "green" : cacheHit >= 0.4 ? undefined : "red";
+  const hitTone = hit >= 0.9 ? "green" : hit >= 0.4 ? undefined : "red";
   const estimated = session.unpricedModels?.length ? "~" : "";
 
   // a link from the Overview to By kind: scroll there, once (a link to a prompt is By prompt's to handle)
@@ -1137,10 +1135,10 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
           },
           {
             label: "Cache hit",
-            value: `${(cacheHit * 100).toFixed(1)}%`,
-            sub: `${formatTokens(session.tokens.cacheRead)} of ${formatTokens(session.tokens.input + session.tokens.cacheRead)} input tokens`,
+            value: `${(hit * 100).toFixed(1)}%`,
+            sub: `${formatTokens(session.tokens.cacheRead)} of ${formatTokens(inputTokens(session.tokens))} input tokens`,
             tone: hitTone,
-            title: "cacheRead / (cacheRead + input): input served from the prompt cache instead of billed fresh. Aim for 90% or more.",
+            title: "cacheRead / (input + cacheRead + cacheWrite): input served from the prompt cache instead of read fresh (a cache write is read fresh too). Aim for 90% or more.",
           },
           {
             label: "Cache savings",
