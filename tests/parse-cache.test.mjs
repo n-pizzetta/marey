@@ -61,7 +61,7 @@ test("counts the plugin hook's captures like a full parse, and again after the h
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${s.id}.jsonl`);
   const t0 = Date.parse(s.startedAt);
-  const call = (i) => JSON.stringify({ kind: "tool", t: t0 + i * 1000, tool: "Bash", inPreview: `{"command":"echo ${i}"}`, outPreview: `${i}` }) + "\n";
+  const call = (i) => JSON.stringify({ kind: "tool", t: t0 + i * 1000, tool: "Bash", inPreview: `{"command":"echo ${i}"}`, outPreview: `${i}\u2028` }) + "\n";
   const capture = async (opts) => (await parser.parseAllSessions(opts)).sessions.find((x) => x.id === s.id).pluginCapture;
   writeFileSync(file, call(1) + call(2));
   const full = await capture();

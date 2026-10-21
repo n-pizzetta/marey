@@ -5,8 +5,6 @@
  * Claude Code and Codex sessions alike. Read-only. See ARCHITECTURE.md.
  */
 import { readdir, readFile, stat as fspStat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { execFile, execFileSync } from "node:child_process";
@@ -19,6 +17,7 @@ import {
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
+  jsonlLines,
   longestRun,
   toolKey,
 } from "./transcript-utils.mjs";
@@ -437,8 +436,7 @@ export async function parseCodexRollout(path) {
     pending = { tools: [], inBytes: 0, inPreview: "", outBytes: 0, outPreview: "" };
   };
 
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(path)) {
     if (!line.trim()) continue;
     const j = parseJson(line);
     if (!j) continue;

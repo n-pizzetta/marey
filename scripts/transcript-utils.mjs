@@ -2,6 +2,7 @@
  * Helpers shared by the Claude Code transcript parser (parse-sessions.mjs)
  * and the Codex rollout parser (codex.mjs).
  */
+import { createReadStream } from "node:fs";
 
 /** Tool name used for counts: MCP tools are grouped per server (`mcp__github__x` → `mcp:github`). */
 export const toolKey = (name) => (name.startsWith("mcp__") ? `mcp:${name.split("__")[1] || "unknown"}` : name);
@@ -49,6 +50,25 @@ export const own = (s) => (typeof s === "string" ? structuredClone(s) : s);
 
 /** The first `n` characters of `s`, without keeping the rest of `s` in memory. */
 export const clip = (s, n) => own(s.slice(0, n));
+
+/**
+ * The lines of a JSONL file, ended at `\n` only: readline also ends them at U+2028 and U+2029,
+ * which JSON strings may hold.
+ */
+export async function* jsonlLines(path) {
+  let rest = "";
+  for await (const chunk of createReadStream(path, { encoding: "utf8" })) {
+    if (!chunk.includes("\n")) {
+      rest += chunk;
+      continue;
+    }
+    const lines = chunk.split("\n");
+    lines[0] = rest + lines[0];
+    rest = lines.pop();
+    yield* lines;
+  }
+  if (rest) yield rest;
+}
 
 export function firstLineSummary(s) {
   if (!s) return "";
