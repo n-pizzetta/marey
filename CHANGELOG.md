@@ -6,18 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
-- The server uses about ten times less memory: it keeps a light copy of each session and reads a session's calls, prompts and timeline when you open it.
-- Each refresh does less: the plugin hook's capture files are read again only when they change, and running sessions are checked with one `ps` instead of one per session.
-- A refresh reads only the lines appended to a Claude Code transcript that is being written, instead of the whole file again.
-
-### Fixed
-
-- The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.
-- Lines that hold the characters U+2028 or U+2029 were skipped in Claude Code transcripts, Codex rollouts, Copilot CLI sessions and the plugin hook's captures, with their tokens, calls and results.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -30,6 +18,20 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.12.0] — 2026-10-21
+
+### Changed
+
+- The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
+- The server uses about ten times less memory: it keeps a light copy of each session and reads a session's calls, prompts and timeline when you open it.
+- Each refresh does less: the plugin hook's capture files are read again only when they change, and running sessions are checked with one `ps` instead of one per session.
+- A refresh reads only the lines appended to a Claude Code transcript that is being written, instead of the whole file again.
+
+### Fixed
+
+- The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.
+- Lines that hold the characters U+2028 or U+2029 were skipped in Claude Code transcripts, Codex rollouts, Copilot CLI sessions and the plugin hook's captures, with their tokens, calls and results.
 
 ## [0.11.2] — 2026-10-15
 
