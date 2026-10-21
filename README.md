@@ -253,7 +253,7 @@ pnpm test         # node --test (parsers, limits, installers)
 pnpm parse        # one-shot dump of every session to ~/.claude/marey/sessions.json
 ```
 
-The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): it runs the parser in-process, keeps sessions in memory and re-parses when `~/.claude/` changes (unchanged transcripts are cached), as long as a dashboard tab is open and visible. The front-end fetches a lightweight list (`/api/sessions`) and loads each session's detail on demand (`/api/sessions/:id`). If the API is unreachable, it falls back to built-in demo data.
+The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): it runs the parser in-process, keeps a light copy of each session in memory (a session's calls, prompts and timeline are read when it is opened) and re-parses when `~/.claude/` changes (unchanged transcripts are cached), as long as a dashboard tab is open and visible. The front-end fetches a lightweight list (`/api/sessions`) and loads each session's detail on demand (`/api/sessions/:id`). If the API is unreachable, it falls back to built-in demo data.
 
 ```
 ~/.claude/{projects, sessions, usage-data, file-history, history.jsonl}, ~/.codex, ~/.copilot

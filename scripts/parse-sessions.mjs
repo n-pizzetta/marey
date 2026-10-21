@@ -311,17 +311,40 @@ function dropUnreadTranscripts() {
 /** How many parsed transcripts the cache holds (tests). */
 export const cachedTranscriptCount = () => transcriptCache.size;
 
-async function readTranscriptFile(path, { sidechain = false, agent = "claude" } = {}) {
-  readThisParse.add(path);
+/**
+ * What the server keeps of a parsed transcript between parses: what the list, the recommendations
+ * and the Context page read. The calls, prompt texts, turn previews, timeline and file paths are
+ * parsed again when a session is opened (`sessionDetail`). structuredClone copies the strings kept,
+ * so that a preview no longer holds on to the whole tool output or message it was cut from.
+ */
+function lightTranscript(t) {
+  const { toolSequence: _calls, absEvents: _events, pathByHash: _paths, subPrompt: _prompt, ...rest } = t;
+  return structuredClone({
+    ...rest,
+    lastReplyText: lastReply(t.turns),
+    firstUserText: t.firstUserText?.slice(0, 220) ?? t.firstUserText,
+    prompts: t.prompts.map(({ tsMs, preview }) => ({ tsMs, preview })),
+    turns: t.turns.map(({ inPreview: _in, outPreview: _out, ...tu }) => tu),
+  });
+}
+
+/**
+ * A parsed transcript. `light` keeps `lightTranscript` of it in the cache; `cached: false` (a
+ * session's detail) parses it whole and keeps nothing.
+ */
+async function readTranscriptFile(path, { sidechain = false, agent = "claude", light = false, cached = true } = {}) {
+  if (cached) readThisParse.add(path);
   let st;
   try { st = await fspStat(path); } catch { transcriptCache.delete(path); return null; }
-  const cached = transcriptCache.get(path);
-  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.data;
-  const data =
+  const hit = cached && transcriptCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.light === light) return hit.data;
+  const parsed =
     agent === "codex" ? await parseCodexRollout(path)
     : agent === "copilot" ? await parseCopilotEvents(path)
     : await parseTranscriptFile(path, sidechain);
-  transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, data });
+  if (!cached) return parsed;
+  const data = light ? lightTranscript(parsed) : parsed;
+  transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, light, data });
   return data;
 }
 
@@ -724,12 +747,12 @@ async function indexTranscripts() {
  * Sub-agent transcripts: <project>/<sessionId>/subagents/agent-<agentId>.jsonl, with an optional
  * agent-<agentId>.meta.json ({ agentType, description }) that names the run.
  */
-async function readSubagents(entry, sessionId) {
+async function readSubagents(entry, sessionId, read) {
   const dir = join(entry.dir, sessionId, "subagents");
   const files = (await readDirSafe(dir)).filter((f) => f.endsWith(".jsonl"));
   const out = [];
   for (const f of files) {
-    const t = await readTranscriptFile(join(dir, f), { sidechain: true });
+    const t = await readTranscriptFile(join(dir, f), { ...read, sidechain: true });
     if (!t) continue;
     const meta = await readJsonSafe(join(dir, f.replace(/\.jsonl$/, ".meta.json")));
     const label = [meta?.agentType, meta?.description].filter((s) => typeof s === "string" && s).join(" · ");
@@ -831,12 +854,17 @@ function agentContextOf(agent, t, subs) {
   };
 }
 
-async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [] }) {
+/**
+ * `read` says how transcripts are read (`readTranscriptFile`): with `light`, the session leaves out
+ * the detail view's fields (`DETAIL_FIELDS`, `sessionDetail` fills them).
+ */
+async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], read = {} }) {
   const agent = entry?.agent ?? "claude";
-  const t = entry ? await readTranscriptFile(entry.path, { agent }) : null;
+  const light = !!read.light;
+  const t = entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
   if (!t && !meta && !live) return null;
   if (t && !t.firstTs && !meta && !live) return null;
-  const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id) : [];
+  const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id, read) : [];
 
   const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
   const startedAtMs = t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
@@ -894,7 +922,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     costUsd: allTurns.length ? sessionCost(model, tokens, allTurns) : costOf(model, tokens),
     baselineCostUsd: baselineCostFor(model, tokens),
     frictions: isLive ? [] : mapFrictions(facet),
-    timeline: t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
+    timeline: light ? [] : t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
     filesChanged: fileHistory.length || t?.filesChanged || meta?.files_modified || 0,
     commits: t ? t.commits : meta?.git_commits ?? 0,
@@ -910,12 +938,12 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     ...(t?.version ? { version: t.version } : {}),
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
     ...(agent === "copilot" ? { aiCredits: t?.aiCredits ?? null } : {}),
-    fileHistory,
+    fileHistory: light ? [] : fileHistory,
     // Detail payload only, read by /api/agent-context.
     agentContext: agentContextOf(agent, t, subs),
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
-    toolSequence: nestSubagentCalls(
+    toolSequence: light ? [] : nestSubagentCalls(
       mergeToolSequences(relativizeToolSequence(t?.toolSequence ?? [], startedAtMs), pluginCache.entries),
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
@@ -928,7 +956,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     turns,
     ...(isLive
       ? {
-          liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: lastReply(mainTurns), lastTs, now }),
+          liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: t?.lastReplyText ?? lastReply(mainTurns), lastTs, now }),
           ...(live?.name ? { liveName: live.name } : {}),
         }
       : {}),
@@ -1164,15 +1192,20 @@ function markUnpriced(s) {
  * errors (unreadable session-meta files), modelOverrides, readings (the
  * freshest Codex limits and Copilot quota the sessions logged, for
  * provider-limits.mjs) }. Used by scripts/api.mjs and by `pnpm parse`.
+ * With `light`, sessions leave out the detail view's fields: `sessionDetail`
+ * parses them when a session is opened.
  */
-export async function parseAllSessions() {
+export async function parseAllSessions({ light = false } = {}) {
   readThisParse = new Set();
+  const read = { light };
+  const inputs = new Map();
   const modelOverrides = await loadModelOverrides();
   const codexIndex = await indexCodexRollouts();
   const copilotIndex = await indexCopilotSessions();
   const readings = { codex: null, copilot: null };
   if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0 && copilotIndex.size === 0) {
     dropUnreadTranscripts();
+    buildInputs = inputs;
     return { sessions: [], errors: [], modelOverrides, readings };
   }
 
@@ -1196,37 +1229,42 @@ export async function parseAllSessions() {
   const now = Date.now();
   const all = [];
   for (const id of new Set([...index.keys(), ...metaById.keys(), ...liveById.keys()])) {
-    const s = await buildSession(id, {
+    const input = {
       entry: index.get(id),
       meta: metaById.get(id)?.meta,
       facet: metaById.get(id)?.facet,
       live: liveById.get(id),
       dead: deadIds.has(id),
-      history,
-      now,
-    });
-    if (s) all.push(s);
+    };
+    const s = await buildSession(id, { ...input, history, now, read });
+    if (!s) continue;
+    all.push(s);
+    inputs.set(id, input);
   }
   // Codex: an id already built from ~/.claude wins. Sub-agent rollouts are merged into their root.
   const built = new Set(all.map((s) => s.id));
   const codexParsed = new Map();
   for (const [id, entry] of codexIndex) {
     if (built.has(id)) continue;
-    const t = await readTranscriptFile(entry.path, { agent: "codex" });
+    const t = await readTranscriptFile(entry.path, { ...read, agent: "codex" });
     if (t) codexParsed.set(id, t);
   }
+  /** Root id → ids of the sub-agent rollouts merged into it. */
   const codexChildren = new Map();
   for (const id of codexParsed.keys()) {
     const root = codexRootOf(id, codexParsed);
-    if (root !== id) codexChildren.set(root, [...(codexChildren.get(root) ?? []), codexParsed.get(id)]);
+    if (root !== id) codexChildren.set(root, [...(codexChildren.get(root) ?? []), id]);
   }
   const codexRunning = codexParsed.size > 0 && isCodexRunning();
   for (const [id, t] of codexParsed) {
     if (codexRootOf(id, codexParsed) !== id) continue;
     const entry = codexIndex.get(id);
     const live = (await isCodexLive(entry.path, t, codexRunning, now)) ? { isLive: true, cwd: t.cwd } : undefined;
-    const s = await buildSession(id, { entry, live, dead: false, history, now, codexChildren: codexChildren.get(id) });
-    if (s) all.push(s);
+    const children = codexChildren.get(id) ?? [];
+    const s = await buildSession(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
+    if (!s) continue;
+    all.push(s);
+    inputs.set(id, { entry, live, dead: false, codexChildEntries: children.map((c) => codexIndex.get(c)) });
   }
   readings.codex = freshest(codexParsed.values(), "rateLimits");
 
@@ -1237,13 +1275,15 @@ export async function parseAllSessions() {
     const copilotParsed = [];
     for (const [id, entry] of copilotIndex) {
       if (built.has(id)) continue;
-      const t = await readTranscriptFile(entry.path, { agent: "copilot" });
+      const t = await readTranscriptFile(entry.path, { ...read, agent: "copilot" });
       if (!t) continue;
       copilotParsed.push(t);
       const isLive = entry.pids.some((pid) => pids.has(pid));
       const live = isLive ? { isLive: true, cwd: entry.cwd ?? t.cwd, liveState: copilotLiveState(t, open.get(id), now) } : undefined;
-      const s = await buildSession(id, { entry, live, dead: false, history, now });
-      if (s) all.push(s);
+      const s = await buildSession(id, { entry, live, dead: false, history, now, read });
+      if (!s) continue;
+      all.push(s);
+      inputs.set(id, { entry, live, dead: false });
     }
     readings.copilot = freshest(copilotParsed, "quota");
   }
@@ -1254,13 +1294,40 @@ export async function parseAllSessions() {
   for (const s of all) markUnpriced(s);
   await applyContextWindows(all);
   dropUnreadTranscripts();
+  buildInputs = inputs;
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
 }
 
+/** What the last parse built each session from, for `sessionDetail`. */
+let buildInputs = new Map();
+
+/** The fields light sessions leave out (`parseAllSessions({ light: true })`). */
+const DETAIL_FIELDS = ["prompts", "toolSequence", "turns", "timeline", "fileHistory"];
+
+/**
+ * A session from the last parse with its detail view's fields, parsed again from its files and
+ * kept by nobody. The rest (live state, chains, context window) stays as the parse left it.
+ */
+export async function sessionDetail(session) {
+  const input = buildInputs.get(session.id);
+  if (!input) return session;
+  const read = { cached: false };
+  const codexChildren = [];
+  for (const entry of input.codexChildEntries ?? []) {
+    const t = await readTranscriptFile(entry.path, { ...read, agent: "codex" });
+    if (t) codexChildren.push(t);
+  }
+  const full = await buildSession(session.id, { ...input, history: new Map(), now: Date.now(), codexChildren, read });
+  if (!full) return session;
+  const detail = { ...session };
+  for (const key of DETAIL_FIELDS) detail[key] = full[key];
+  return detail;
+}
+
 /**
  * Strip heavy fields from a Session to produce a lightweight summary suitable
- * for the session list / sidebar. Detail views (`getSessionById`) hand back the
+ * for the session list / sidebar. Detail views (`sessionDetail`) hand back the
  * full object.
  */
 export function summarizeSession(s) {

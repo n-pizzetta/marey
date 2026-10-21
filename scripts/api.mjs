@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { promises as fsp, watch, existsSync, readFileSync, statSync, createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { mergeLimits, parseAllSessions, readLimits, readLiveContext, summarizeSession } from "./parse-sessions.mjs";
+import { mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
@@ -92,7 +92,8 @@ async function runParser() {
   parsing = true;
   try {
     const t0 = Date.now();
-    const { sessions, errors, modelOverrides, readings } = await parseAllSessions();
+    // Light sessions: a session's calls, prompts and timeline are parsed when it is opened.
+    const { sessions, errors, modelOverrides, readings } = await parseAllSessions({ light: true });
     cache.generatedAt = new Date().toISOString();
     cache.modelOverrides = modelOverrides;
     cache.sessions = sessions;
@@ -319,7 +320,7 @@ async function handleApi(req, res) {
     if (!s) return send(res, 404, "session not found");
     res.setHeader("cache-control", "no-store");
     // The Context page's raw signals stay out of the detail payload.
-    const { agentContext: _context, ...detail } = s;
+    const { agentContext: _context, ...detail } = await sessionDetail(s);
     return sendJson(res, 200, detail);
   }
 

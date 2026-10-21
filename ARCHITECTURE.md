@@ -124,6 +124,8 @@ Sessions are returned sorted by `startedAt` descending. Helpers shared by both p
 
 `readTranscriptFile` caches parsed results in `transcriptCache`, keyed by path and invalidated when `mtime` or `size` changes, so periodic re-parses only re-read transcripts that grew. A transcript the parse did not read (deleted, or a Codex rollout already built from `~/.claude`) leaves the cache when the parse ends.
 
+**Light sessions.** The server parses with `parseAllSessions({ light: true })`: the cache keeps `lightTranscript` of each transcript, without the tool sequence, the timeline events, the file paths, the prompt texts and the turn previews (it keeps the start of the last reply, `lastReplyText`, for the live state). Its sessions have everything the list, the recommendations and the Context page read, and empty `toolSequence`, `timeline` and `fileHistory`. `sessionDetail(session)` fills those and the full `prompts` and `turns` (`DETAIL_FIELDS`) when a session is opened: it parses the session's files again (`cached: false`, kept by nobody) from what the last parse built it from (`buildInputs`); the rest stays as the parse left it. The light copy is made with `structuredClone`: a preview cut with `slice` would otherwise keep the whole tool output or message it came from in memory. `pnpm parse` and the tests parse in full.
+
 ### Codex rollouts (`scripts/codex.mjs`)
 
 `parseCodexRollout()` returns the same intermediate shape as `parseTranscriptFile`, so `buildSession` handles both. Formats seen from Codex 0.12x to 0.154 are supported:
@@ -256,7 +258,7 @@ Shared by the production server and the Vite dev server, so both expose the same
 | Method | Path | Purpose | Guards |
 |---|---|---|---|
 | GET | `/api/sessions` | Session summaries + `errors` + `models` overrides + `generatedAt`. | `ETag` / `If-None-Match` → 304; `cache-control: no-cache`. |
-| GET | `/api/sessions/:id` | Full session from the cache. | id must be a 36-char UUID; 404 if unknown. |
+| GET | `/api/sessions/:id` | Full session: the cached light session with its calls, prompts, turns, timeline and file history parsed again (`sessionDetail`, §3). | id must be a 36-char UUID; 404 if unknown. |
 | POST | `/api/sessions/:id/focus` | Bring the terminal running a live Claude Code session to the front (see below). Returns `{ app, exact }`. | UUID check; POST only; 409 unless the session is live with a pid; 501 off macOS. |
 | GET | `/api/file-history/:id/:hash@v:n` | Raw snapshot from `file-history/`. | id and file name regex-validated (no path traversal). |
 | GET | `/api/recommendations` | Recommendation cards and `coverage` from the last parse (§5). | `no-store`. |

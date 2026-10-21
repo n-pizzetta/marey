@@ -35,6 +35,25 @@ function someTranscript() {
   throw new Error("no seeded transcript");
 }
 
+test("light sessions match the full parse in the list, and in the detail once opened", async () => {
+  const full = await parser.parseAllSessions();
+  const light = await parser.parseAllSessions({ light: true });
+  assert.equal(light.sessions.length, full.sessions.length);
+  const byId = new Map(full.sessions.map((s) => [s.id, s]));
+  for (const s of light.sessions) {
+    const want = byId.get(s.id);
+    assert.deepEqual(parser.summarizeSession(s), parser.summarizeSession(want), `list of ${s.id}`);
+    assert.deepEqual(await parser.sessionDetail(s), want, `detail of ${s.id}`);
+  }
+});
+
+test("light sessions keep no calls, timeline, file paths or prompt texts", async () => {
+  const { sessions } = await parser.parseAllSessions({ light: true });
+  assert.deepEqual(sessions.filter((s) => s.toolSequence.length || s.timeline.length || s.fileHistory.length).map((s) => s.id), []);
+  assert.ok(sessions.some((s) => s.prompts.length > 0));
+  assert.ok(sessions.every((s) => s.prompts.every((p) => p.text === undefined && "preview" in p)));
+});
+
 test("drops a deleted transcript and its sub-agents from the cache at the next parse", async () => {
   await parser.parseAllSessions();
   const before = parser.cachedTranscriptCount();
