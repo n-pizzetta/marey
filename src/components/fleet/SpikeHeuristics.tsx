@@ -1,5 +1,5 @@
 import type { Session } from "../../types";
-import { sumTokens } from "../../utils/fleetStats";
+import { cacheHit, inputTokens, sumTokens } from "../../utils/fleetStats";
 import { formatTokens } from "../../utils/format";
 
 export type HeuristicHit = {
@@ -76,11 +76,10 @@ export function runHeuristics(
     }
 
     // Cache miss vs session baseline
-    const wPool = wTokens.input + wTokens.cacheRead;
-    const sPool = s.tokens.input + s.tokens.cacheRead;
-    if (wPool >= 50_000 && sPool >= 100_000) {
-      const wHit = wTokens.cacheRead / wPool;
-      const sHit = s.tokens.cacheRead / sPool;
+    const wPool = inputTokens(wTokens);
+    if (wPool >= 50_000 && inputTokens(s.tokens) >= 100_000) {
+      const wHit = cacheHit(wTokens);
+      const sHit = cacheHit(s.tokens);
       if ((sHit - wHit) * 100 >= CACHE_MISS_DROP_PP) {
         cacheMissHits.push({ project: s.project, sessionHit: sHit, spikeHit: wHit, pool: wPool });
       }

@@ -12,6 +12,21 @@ export function sumTokens(t: TokenBundle): number {
   return t.input + t.output + t.cacheRead + t.cacheWrite;
 }
 
+/** Every input token: fresh, read from the prompt cache and written to it. */
+export function inputTokens(t: TokenBundle): number {
+  return t.input + t.cacheRead + t.cacheWrite;
+}
+
+/**
+ * Share of the input read from the prompt cache. A cache write is input read fresh too: Claude models
+ * bill all but the last few tokens of an uncached prompt as cache write, so without it nearly every
+ * Claude Code and Copilot session reads 100%. Codex never writes.
+ */
+export function cacheHit(t: TokenBundle): number {
+  const all = inputTokens(t);
+  return all > 0 ? t.cacheRead / all : 0;
+}
+
 /** Sum tokens from all turns whose absolute timestamp (startedAt + turn.t) falls in [fromMs, toMs]. */
 export function tokensInWindow(sessions: Session[], fromMs: number, toMs: number): { tokens: TokenBundle; cost: number } {
   const tokens: TokenBundle = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };

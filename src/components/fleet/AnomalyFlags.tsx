@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Session } from "../../types";
-import { sumTokens } from "../../utils/fleetStats";
+import { cacheHit, inputTokens, sumTokens } from "../../utils/fleetStats";
 import { formatDuration, formatTokens } from "../../utils/format";
 
 interface Props {
@@ -42,9 +42,9 @@ export function AnomalyFlags({ sessions, onSelectSession }: Props) {
           detail: `${formatTokens(total)} tokens — ${(total / med).toFixed(1)}× median (${formatTokens(med)})`,
         });
       }
-      const inputPool = s.tokens.input + s.tokens.cacheRead;
+      const inputPool = inputTokens(s.tokens);
       if (inputPool >= 100_000) {
-        const hit = s.tokens.cacheRead / inputPool;
+        const hit = cacheHit(s.tokens);
         if (hit < 0.5) {
           out.push({
             kind: "lowcache",
