@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
+
 ### Fixed
 
 - The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.

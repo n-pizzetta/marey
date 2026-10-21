@@ -250,6 +250,7 @@ Shared by the production server and the Vite dev server, so both expose the same
 - `fs.watch` on `sessions/`, `usage-data/session-meta/`, `usage-data/facets/`, `marey/cache/` (missing dirs are skipped with a warning);
 - a 10 s interval (transcripts under `projects/` are not watched);
 - events are coalesced: at most one parse every 5 s (minimum 600 ms delay), and a parse requested during a parse runs right after it.
+- re-parses stop while nobody looks: with no request for the parsed sessions in 2 minutes (`idleAfter`; the dashboard only polls from a visible tab), refresh ticks and watcher events are ignored, and the next such request waits for a fresh parse. Routes the dashboard keeps polling from a hidden tab (`/api/limits`, `/api/live-context`, `/api/report-status`) don't count. The dev server passes `idleAfter: Infinity`: its UI refetches on the HMR push instead of polling.
 - An `onParsed` callback runs after each parse (the dev server uses it for HMR).
 
 | Method | Path | Purpose | Guards |
@@ -303,7 +304,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 ### Data loading
 
 - [`src/data/loadSessions.ts`](src/data/loadSessions.ts): `loadSessions()` fetches `/api/sessions` with `cache: "no-cache"` (ETag revalidation) and applies the `models` overrides; `loadSessionDetail(id)` fetches `/api/sessions/:id` when a session is opened. If the API is unreachable or returns no sessions, the app falls back to `src/data/mockSessions.ts` (shown as an amber status dot and "mock data" in the profile menu).
-- **Polling / HMR.** In production `App.tsx` refreshes every 5 s (cheap thanks to 304s). In dev, polling is off and the app refetches on the `marey:sessions-updated` HMR event pushed after each server-side parse. `/api/report-status` is fetched on each refresh; `/api/limits` and `/api/live-context` are polled separately (5 s).
+- **Polling / HMR.** In production `App.tsx` refreshes every 5 s while the tab is visible (cheap thanks to 304s), and at once when it becomes visible again: a hidden tab lets the server stop re-parsing (§6). In dev, polling is off and the app refetches on the `marey:sessions-updated` HMR event pushed after each server-side parse. `/api/report-status` is fetched on each refresh; `/api/limits` and `/api/live-context` are polled separately (5 s).
 
 ### State and routing (`App.tsx`)
 
@@ -380,7 +381,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 - **Live detection needs `ps`.** `isClaudePidAlive` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
 - **Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one. Codex's too when `codex app-server` can't be asked (Codex not on the `PATH`, signed in with an API key, offline).
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
-- **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call).
+- **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call), and only while a dashboard asks for them (§6).
 - **Opening a terminal is macOS only and exact in Ghostty only.** Other apps (iTerm2, Terminal, VS Code…) are only brought to the front; a session inside tmux, zellij or screen is refused.
 - **`/clear` chains are heuristic.** They are linked by identical `custom-title` in the same project/cwd.
 - **Qualitative fields depend on `/insights`.** Without it, outcome is `unknown`, satisfaction defaults to 0.5, frictions are empty. Friction positions (`at`) are synthetic, not timestamps: the Timeline draws them at that fraction of its chart, marked approximate.

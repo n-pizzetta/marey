@@ -231,12 +231,16 @@ function App() {
     refresh();
     const hot = (import.meta as ImportMeta & { hot?: { on: (e: string, cb: () => void) => void; off?: (e: string, cb: () => void) => void } }).hot;
     const hmrActive = !!hot;
-    const id = hmrActive ? null : setInterval(refresh, POLL_MS);
+    // Only a visible tab polls, so the server stops re-parsing when nobody looks; it catches up on return.
+    const poll = () => { if (document.visibilityState === "visible") refresh(); };
+    const id = hmrActive ? null : setInterval(poll, POLL_MS);
+    if (!hmrActive) document.addEventListener("visibilitychange", poll);
     const onPush = () => refresh();
     if (hot) hot.on("marey:sessions-updated", onPush);
     return () => {
       cancelled = true;
       if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", poll);
       if (hot?.off) hot.off("marey:sessions-updated", onPush);
     };
   }, []);

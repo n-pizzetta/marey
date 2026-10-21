@@ -127,8 +127,33 @@ async function runParser() {
 const MIN_PARSE_INTERVAL_MS = 5_000;
 let lastParseAt = 0;
 let debounce = null;
+
+/**
+ * The dashboard asks for the sessions every 5 s while its tab is visible. With no such request for
+ * IDLE_AFTER_MS, nobody is looking: re-parses stop, and the next request waits for a fresh one.
+ */
+const IDLE_AFTER_MS = 2 * 60_000;
+let idleAfterMs = IDLE_AFTER_MS;
+let lastAskedAt = Date.now();
+let idle = false;
+let waking = null;
+
+/** A request that reads the parsed sessions: after an idle spell, it waits for a fresh parse. */
+async function freshSessions() {
+  lastAskedAt = Date.now();
+  if (idle) {
+    idle = false;
+    waking ??= runParser().finally(() => (waking = null));
+  }
+  if (waking) await waking;
+}
+
 function scheduleParse() {
   if (debounce) return;
+  if (Date.now() - lastAskedAt > idleAfterMs) {
+    idle = true;
+    return;
+  }
   const wait = Math.max(600, lastParseAt + MIN_PARSE_INTERVAL_MS - Date.now());
   debounce = setTimeout(() => {
     debounce = null;
@@ -250,11 +275,17 @@ function serveUsageReport(_req, res) {
   createReadStream(REPORT_HTML).pipe(res);
 }
 
-/** Routes that answer without the parsed sessions, so they work while the first parse runs. */
-const NO_PARSE_NEEDED = new Set(["/api/version", "/api/update", "/api/limits"]);
+/**
+ * Routes that answer without the parsed sessions, so they work while the first parse runs, and
+ * that don't keep the parser awake (the dashboard polls some of them from a hidden tab).
+ */
+const NO_PARSE_NEEDED = new Set(["/api/version", "/api/update", "/api/limits", "/api/live-context", "/api/report-status"]);
 
 async function handleApi(req, res) {
-  if (!NO_PARSE_NEEDED.has((req.url || "").split("?")[0])) await ready;
+  if (!NO_PARSE_NEEDED.has((req.url || "").split("?")[0])) {
+    await ready;
+    await freshSessions();
+  }
   const url = req.url || "";
 
   if (url === "/api/sessions" || url.startsWith("/api/sessions?")) {
@@ -460,9 +491,12 @@ async function handleApi(req, res) {
  * Parse once, then keep the cache fresh: fs watchers on the small state dirs
  * plus a periodic refresh (transcripts aren't watched; watched dirs may not
  * exist yet on a fresh install). `onParsedCb` runs after every parse.
+ * `idleAfter` (ms) stops re-parsing that long after the last request for the
+ * sessions; Infinity never stops.
  */
-export async function startApi({ onParsed: onParsedCb } = {}) {
+export async function startApi({ onParsed: onParsedCb, idleAfter = IDLE_AFTER_MS } = {}) {
   if (onParsedCb) onParsed = onParsedCb;
+  idleAfterMs = idleAfter;
   try {
     await runParser();
   } finally {
