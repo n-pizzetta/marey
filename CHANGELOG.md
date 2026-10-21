@@ -10,6 +10,7 @@ versioning follows [SemVer](https://semver.org/).
 
 - The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
 - The server uses about ten times less memory: it keeps a light copy of each session and reads a session's calls, prompts and timeline when you open it.
+- Each refresh does less: the plugin hook's capture files are read again only when they change, and running sessions are checked with one `ps` instead of one per session.
 
 ### Fixed
 

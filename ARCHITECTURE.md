@@ -73,7 +73,7 @@ Copilot CLI (`~/.copilot`, or `$COPILOT_HOME`), also read-only: `session-state/<
 ### Written
 
 - Everything Marey writes by itself lives under `~/.claude/marey/` (`scripts/data-dir.mjs`). Before the rename it was `~/.claude/ccblackbox/`: the first call to `dataDir()` (API, parser, plugin hook, `/marey:limits`) moves that folder and leaves a symlink at the old path, so a status line wrapper or an older plugin still writing there lands in the same place:
-  - `cache/<id>.jsonl`: one line per tool call / stop, appended by the plugin hook (mode `0600`).
+  - `cache/<id>.jsonl`: one line per tool call / stop, appended by the plugin hook (mode `0600`). A light parse keeps each file's counts (calls, last capture, last stop) and reads it again only when its `mtime` or size changes (`readPluginCache`); the calls themselves are read with a session's detail.
   - `limits.json`: latest `rate_limits` payload, written atomically by the status line wrapper. `limits-history.jsonl`: one line per change of either window (`{t, five:{p,r}, seven:{p,r}}`, trimmed at 512 KB), kept to calibrate "% of window" later.
   - `live/<session_id>.json`: sanitized per-session snapshot (context size, prompt-cache state; no paths or prompts) written on every refresh; the API removes ones older than 3 days.
   - `statusline.mjs`, `context-advice.mjs`, `statusline.json`: installed wrapper, its shared helper, and the saved previous `statusLine` setting (plus `"verdict": false` to hide the terminal segment).
@@ -96,7 +96,7 @@ Used as a library by `scripts/api.mjs`, and as a CLI (`pnpm parse`) that writes 
 ### Pipeline (`parseAllSessions`)
 
 1. `loadModelOverrides()` reads `~/.claude/marey/models.json` and applies it via `setModelOverrides` (invalid file → warning, built-in table).
-2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds **and** `ps -p <pid> -o comm=` matches `claude`. Read-only. Ids in `sessions/.stale/` are added to the dead set.
+2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds **and** its `comm` matches `claude` (`claudePids`: one `ps -p <pids> -o pid=,comm=` for all the pid files). Read-only. Ids in `sessions/.stale/` are added to the dead set.
 3. `readHistoryBySession()` groups `history.jsonl` by session id.
 4. `indexTranscripts()` maps every `projects/*/<id>.jsonl` by session id. Project directory names are lossy (`.`, `_`, `/` all become `-`), so lookups are by id only, never by reconstructed path.
 5. `collectLive()` expands each alive pid file to its `/clear` chain (sibling transcripts in the same project dir with the same `custom-title`, modified later); only the newest in the chain is marked live.
@@ -380,7 +380,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 
 ## 11. Known limitations
 
-- **Live detection needs `ps`.** `isClaudePidAlive` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
+- **Live detection needs `ps`.** `claudePids` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
 - **Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one. Codex's too when `codex app-server` can't be asked (Codex not on the `PATH`, signed in with an API key, offline).
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
 - **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call), and only while a dashboard asks for them (§6).

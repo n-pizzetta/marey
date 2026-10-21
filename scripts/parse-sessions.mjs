@@ -213,9 +213,30 @@ async function readFileHistory(sessionId, pathByHash) {
     });
 }
 
-async function readPluginCache(sessionId, startedAtMs) {
+/** Hook capture counts by file (`readPluginCache`). */
+const captureCache = new Map();
+
+/**
+ * What the plugin hook captured of a session: its calls (`entries`, a full read only), how many,
+ * and the time of the last capture and of the last stop. A light read keeps the counts per file
+ * and reads the file again only when its mtime or size changes: the hook appends to it on every call.
+ */
+async function readPluginCache(sessionId, startedAtMs, { light = false } = {}) {
   const file = join(PLUGIN_CACHE_DIR, `${sessionId}.jsonl`);
-  if (!existsSync(file)) return { entries: [], lastTsMs: 0, stopTsMs: 0 };
+  if (!light) return readCaptureFile(file, startedAtMs);
+  readThisParse.add(file);
+  let st;
+  try { st = await fspStat(file); } catch { captureCache.delete(file); return { entries: [], count: 0, lastTsMs: 0, stopTsMs: 0 }; }
+  const hit = captureCache.get(file);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.data;
+  const { count, lastTsMs, stopTsMs } = await readCaptureFile(file, startedAtMs);
+  const data = { entries: [], count, lastTsMs, stopTsMs };
+  captureCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, data });
+  return data;
+}
+
+async function readCaptureFile(file, startedAtMs) {
+  if (!existsSync(file)) return { entries: [], count: 0, lastTsMs: 0, stopTsMs: 0 };
   const entries = [];
   let lastTsMs = 0;
   let stopTsMs = 0;
@@ -245,7 +266,7 @@ async function readPluginCache(sessionId, startedAtMs) {
       entries.push(entry);
     }
   } catch { /* skip */ }
-  return { entries, lastTsMs, stopTsMs };
+  return { entries, count: entries.length, lastTsMs, stopTsMs };
 }
 
 function mergeToolSequences(transcriptSeq, pluginSeq) {
@@ -301,11 +322,13 @@ async function readHistoryBySession() {
 
 /** Parsed transcripts keyed by path, reused while the file's mtime and size are unchanged. */
 const transcriptCache = new Map();
-/** Paths read by the parse in progress: once it ends, the others (deleted or skipped files) leave the cache. */
+/** Paths read by the parse in progress: once it ends, the others (deleted or skipped files) leave the caches. */
 let readThisParse = new Set();
 
-function dropUnreadTranscripts() {
-  for (const path of transcriptCache.keys()) if (!readThisParse.has(path)) transcriptCache.delete(path);
+function dropUnreadFiles() {
+  for (const cache of [transcriptCache, captureCache]) {
+    for (const path of cache.keys()) if (!readThisParse.has(path)) cache.delete(path);
+  }
 }
 
 /** How many parsed transcripts the cache holds (tests). */
@@ -666,22 +689,31 @@ function relativizeTurns(turns, prompts, startedAt) {
   });
 }
 
-function isClaudePidAlive(pid) {
-  if (!pid || typeof pid !== "number") return false;
+/** The pids among `pids` that run Claude Code: alive, and `claude` in their command (pids get reused). One `ps` for all. */
+export function claudePids(pids) {
+  const alive = pids.filter((pid) => {
+    if (!pid || typeof pid !== "number") return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (alive.length === 0) return new Set();
+  let out;
   try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
+    out = execFileSync("ps", ["-p", alive.join(","), "-o", "pid=,comm="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch (err) {
+    // ps exits 1 when one of the pids has exited since: the others are still listed.
+    out = typeof err.stdout === "string" ? err.stdout : "";
   }
-  try {
-    const comm = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return /claude/i.test(comm);
-  } catch {
-    return false;
+  const found = new Set();
+  for (const line of out.split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m && /claude/i.test(m[2])) found.add(Number(m[1]));
   }
+  return found;
 }
 
 async function readCustomTitleFast(path) {
@@ -893,7 +925,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   const firstPrompt = t?.firstUserText ?? meta?.first_prompt ?? msgs[0]?.display ?? "";
   const customTitle = t?.customTitle ?? null;
   const fileHistory = await readFileHistory(id, t?.pathByHash);
-  const pluginCache = await readPluginCache(id, startedAtMs);
+  const pluginCache = await readPluginCache(id, startedAtMs, read);
   const totalTools = Object.values(toolCounts).reduce((a, b) => a + b, 0);
   const empty = !!t && t.userMessages === 0 && totalTools === 0;
   // Ghost actions (reveal, delete) only know Claude Code's projects/ layout.
@@ -964,10 +996,10 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       ? { tool: t.runningTool.tool, preview: t.runningTool.preview, t: Math.max(0, (t.runningTool.tsMs ?? startedAtMs) - startedAtMs) }
       : null,
     lastEventAt: lastTs ? new Date(lastTs).toISOString() : undefined,
-    ...(pluginCache.entries.length
+    ...(pluginCache.count
       ? {
           pluginCapture: {
-            entries: pluginCache.entries.length,
+            entries: pluginCache.count,
             lastEventAt: new Date(pluginCache.lastTsMs).toISOString(),
             stoppedAt: pluginCache.stopTsMs ? new Date(pluginCache.stopTsMs).toISOString() : null,
           },
@@ -983,12 +1015,16 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
  */
 async function classifyLiveFiles() {
   const files = (await readDirSafe(LIVE_DIR)).filter((f) => f.endsWith(".json"));
-  const alive = [];
-  const deadIds = new Set();
+  const infos = [];
   for (const file of files) {
     const info = await readJsonSafe(join(LIVE_DIR, file));
-    if (!info || !info.sessionId) continue;
-    if (isClaudePidAlive(info.pid)) alive.push(file);
+    if (info && info.sessionId) infos.push({ file, info });
+  }
+  const running = claudePids(infos.map(({ info }) => info.pid));
+  const alive = [];
+  const deadIds = new Set();
+  for (const { file, info } of infos) {
+    if (running.has(info.pid)) alive.push(file);
     else deadIds.add(info.sessionId);
   }
   return { alive, deadIds };
@@ -1204,7 +1240,7 @@ export async function parseAllSessions({ light = false } = {}) {
   const copilotIndex = await indexCopilotSessions();
   const readings = { codex: null, copilot: null };
   if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0 && copilotIndex.size === 0) {
-    dropUnreadTranscripts();
+    dropUnreadFiles();
     buildInputs = inputs;
     return { sessions: [], errors: [], modelOverrides, readings };
   }
@@ -1293,7 +1329,7 @@ export async function parseAllSessions({ light = false } = {}) {
   reassignLiveToChainTail(all);
   for (const s of all) markUnpriced(s);
   await applyContextWindows(all);
-  dropUnreadTranscripts();
+  dropUnreadFiles();
   buildInputs = inputs;
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
