@@ -73,7 +73,7 @@ Copilot CLI (`~/.copilot`, or `$COPILOT_HOME`), also read-only: `session-state/<
 ### Written
 
 - Everything Marey writes by itself lives under `~/.claude/marey/` (`scripts/data-dir.mjs`). Before the rename it was `~/.claude/ccblackbox/`: the first call to `dataDir()` (API, parser, plugin hook, `/marey:limits`) moves that folder and leaves a symlink at the old path, so a status line wrapper or an older plugin still writing there lands in the same place:
-  - `cache/<id>.jsonl`: one line per tool call / stop, appended by the plugin hook (mode `0600`).
+  - `cache/<id>.jsonl`: one line per tool call / stop, appended by the plugin hook (mode `0600`). A light parse keeps each file's counts (calls, last capture, last stop) and reads it again only when its `mtime` or size changes (`readPluginCache`); the calls themselves are read with a session's detail.
   - `limits.json`: latest `rate_limits` payload, written atomically by the status line wrapper. `limits-history.jsonl`: one line per change of either window (`{t, five:{p,r}, seven:{p,r}}`, trimmed at 512 KB), kept to calibrate "% of window" later.
   - `live/<session_id>.json`: sanitized per-session snapshot (context size, prompt-cache state; no paths or prompts) written on every refresh; the API removes ones older than 3 days.
   - `statusline.mjs`, `context-advice.mjs`, `statusline.json`: installed wrapper, its shared helper, and the saved previous `statusLine` setting (plus `"verdict": false` to hide the terminal segment).
@@ -96,7 +96,7 @@ Used as a library by `scripts/api.mjs`, and as a CLI (`pnpm parse`) that writes 
 ### Pipeline (`parseAllSessions`)
 
 1. `loadModelOverrides()` reads `~/.claude/marey/models.json` and applies it via `setModelOverrides` (invalid file → warning, built-in table).
-2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds **and** `ps -p <pid> -o comm=` matches `claude`. Read-only. Ids in `sessions/.stale/` are added to the dead set.
+2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds **and** its `comm` matches `claude` (`claudePids`: one `ps -p <pids> -o pid=,comm=` for all the pid files). Read-only. Ids in `sessions/.stale/` are added to the dead set.
 3. `readHistoryBySession()` groups `history.jsonl` by session id.
 4. `indexTranscripts()` maps every `projects/*/<id>.jsonl` by session id. Project directory names are lossy (`.`, `_`, `/` all become `-`), so lookups are by id only, never by reconstructed path.
 5. `collectLive()` expands each alive pid file to its `/clear` chain (sibling transcripts in the same project dir with the same `custom-title`, modified later); only the newest in the chain is marked live.
@@ -122,7 +122,11 @@ Sessions are returned sorted by `startedAt` descending. Helpers shared by both p
 - Caps: prompt texts (first 100, truncated), tool sequence (first 300 entries per transcript, previews truncated), result previews.
 - File paths from tool inputs are hashed (`sha256(path)` first 16 hex chars) to label `file-history` entries; unmatched hashes are shown without a path.
 
-`readTranscriptFile` caches parsed results in `transcriptCache`, keyed by path and invalidated when `mtime` or `size` changes, so periodic re-parses only re-read transcripts that grew.
+`readTranscriptFile` caches parsed results in `transcriptCache`, keyed by path and invalidated when `mtime` or `size` changes, so periodic re-parses only re-read transcripts that grew. A transcript the parse did not read (deleted, or a Codex rollout already built from `~/.claude`) leaves the cache when the parse ends.
+
+**Light sessions.** The server parses with `parseAllSessions({ light: true })`: the cache keeps `lightTranscript` of each transcript, without the tool sequence, the timeline events, the file paths, the prompt texts and the turn previews (it keeps the start of the last reply, `lastReplyText`, for the live state). Its sessions have everything the list, the recommendations and the Context page read, and empty `toolSequence`, `timeline` and `fileHistory`. `sessionDetail(session)` fills those and the full `prompts` and `turns` (`DETAIL_FIELDS`) when a session is opened: it parses the session's files again (`cached: false`, kept by nobody) from what the last parse built it from (`buildInputs`); the rest stays as the parse left it. The light copy is made with `structuredClone`: a preview cut with `slice` would otherwise keep the whole tool output or message it came from in memory. `pnpm parse` and the tests parse in full.
+
+**Transcripts being written.** `createTranscriptParser` takes a transcript one parsed line at a time and says what the lines so far add up to without changing its state, so lines appended later can follow; what it keeps across lines is copied (`clip`, `own` in `transcript-utils.mjs`). A light read of a Claude Code transcript written to in the last 10 minutes (`HOT_MS`) keeps its parser in the cache entry, with the offset after the last line read, the file's inode and its first bytes and last bytes before that offset (`marksOf`). The next read feeds the parser only the lines appended since (`feedFrom`); another inode, a shorter file or other bytes at those marks mean a rewrite, and the file is read again from the start. The parser goes once the file has not changed for 10 minutes. Codex rollouts and Copilot CLI sessions are read whole when they change. Lines end at `\n` only: readline also ends them at U+2028 and U+2029, which JSON strings may hold, and dropped those lines.
 
 ### Codex rollouts (`scripts/codex.mjs`)
 
@@ -250,12 +254,13 @@ Shared by the production server and the Vite dev server, so both expose the same
 - `fs.watch` on `sessions/`, `usage-data/session-meta/`, `usage-data/facets/`, `marey/cache/` (missing dirs are skipped with a warning);
 - a 10 s interval (transcripts under `projects/` are not watched);
 - events are coalesced: at most one parse every 5 s (minimum 600 ms delay), and a parse requested during a parse runs right after it.
+- re-parses stop while nobody looks: with no request for the parsed sessions in 2 minutes (`idleAfter`; the dashboard only polls from a visible tab), refresh ticks and watcher events are ignored, and the next such request waits for a fresh parse. Routes the dashboard keeps polling from a hidden tab (`/api/limits`, `/api/live-context`, `/api/report-status`) don't count. The dev server passes `idleAfter: Infinity`: its UI refetches on the HMR push instead of polling.
 - An `onParsed` callback runs after each parse (the dev server uses it for HMR).
 
 | Method | Path | Purpose | Guards |
 |---|---|---|---|
 | GET | `/api/sessions` | Session summaries + `errors` + `models` overrides + `generatedAt`. | `ETag` / `If-None-Match` → 304; `cache-control: no-cache`. |
-| GET | `/api/sessions/:id` | Full session from the cache. | id must be a 36-char UUID; 404 if unknown. |
+| GET | `/api/sessions/:id` | Full session: the cached light session with its calls, prompts, turns, timeline and file history parsed again (`sessionDetail`, §3). | id must be a 36-char UUID; 404 if unknown. |
 | POST | `/api/sessions/:id/focus` | Bring the terminal running a live Claude Code session to the front (see below). Returns `{ app, exact }`. | UUID check; POST only; 409 unless the session is live with a pid; 501 off macOS. |
 | GET | `/api/file-history/:id/:hash@v:n` | Raw snapshot from `file-history/`. | id and file name regex-validated (no path traversal). |
 | GET | `/api/recommendations` | Recommendation cards and `coverage` from the last parse (§5). | `no-store`. |
@@ -303,7 +308,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 ### Data loading
 
 - [`src/data/loadSessions.ts`](src/data/loadSessions.ts): `loadSessions()` fetches `/api/sessions` with `cache: "no-cache"` (ETag revalidation) and applies the `models` overrides; `loadSessionDetail(id)` fetches `/api/sessions/:id` when a session is opened. If the API is unreachable or returns no sessions, the app falls back to `src/data/mockSessions.ts` (shown as an amber status dot and "mock data" in the profile menu).
-- **Polling / HMR.** In production `App.tsx` refreshes every 5 s (cheap thanks to 304s). In dev, polling is off and the app refetches on the `marey:sessions-updated` HMR event pushed after each server-side parse. `/api/report-status` is fetched on each refresh; `/api/limits` and `/api/live-context` are polled separately (5 s).
+- **Polling / HMR.** In production `App.tsx` refreshes every 5 s while the tab is visible (cheap thanks to 304s), and at once when it becomes visible again: a hidden tab lets the server stop re-parsing (§6). In dev, polling is off and the app refetches on the `marey:sessions-updated` HMR event pushed after each server-side parse. `/api/report-status` is fetched on each refresh; `/api/limits` and `/api/live-context` are polled separately (5 s).
 
 ### State and routing (`App.tsx`)
 
@@ -377,10 +382,10 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 
 ## 11. Known limitations
 
-- **Live detection needs `ps`.** `isClaudePidAlive` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
+- **Live detection needs `ps`.** `claudePids` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
 - **Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one. Codex's too when `codex app-server` can't be asked (Codex not on the `PATH`, signed in with an API key, offline).
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
-- **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call).
+- **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call), and only while a dashboard asks for them (§6).
 - **Opening a terminal is macOS only and exact in Ghostty only.** Other apps (iTerm2, Terminal, VS Code…) are only brought to the front; a session inside tmux, zellij or screen is refused.
 - **`/clear` chains are heuristic.** They are linked by identical `custom-title` in the same project/cwd.
 - **Qualitative fields depend on `/insights`.** Without it, outcome is `unknown`, satisfaction defaults to 0.5, frictions are empty. Friction positions (`at`) are synthetic, not timestamps: the Timeline draws them at that fraction of its chart, marked approximate.
