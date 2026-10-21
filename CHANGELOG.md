@@ -11,10 +11,12 @@ versioning follows [SemVer](https://semver.org/).
 - The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
 - The server uses about ten times less memory: it keeps a light copy of each session and reads a session's calls, prompts and timeline when you open it.
 - Each refresh does less: the plugin hook's capture files are read again only when they change, and running sessions are checked with one `ps` instead of one per session.
+- A refresh reads only the lines appended to a Claude Code transcript that is being written, instead of the whole file again.
 
 ### Fixed
 
 - The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.
+- Claude Code transcript lines that hold the characters U+2028 or U+2029 were skipped, with their tokens, calls and results.
 
 ### Planned
 

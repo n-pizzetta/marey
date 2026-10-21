@@ -44,6 +44,12 @@ export function countShellKinds(command, into) {
   for (const kind of hit) into[kind] += 1;
 }
 
+/** `s` as a string of its own: a slice of a string keeps the whole string in memory. */
+export const own = (s) => (typeof s === "string" ? structuredClone(s) : s);
+
+/** The first `n` characters of `s`, without keeping the rest of `s` in memory. */
+export const clip = (s, n) => own(s.slice(0, n));
+
 export function firstLineSummary(s) {
   if (!s) return "";
   const trimmed = s.trim();

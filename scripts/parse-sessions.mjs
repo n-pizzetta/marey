@@ -7,7 +7,7 @@
  * facets only enrich goal, summary, outcome and frictions. Read-only toward
  * Claude Code's files. See ARCHITECTURE.md.
  */
-import { readdir, readFile, writeFile, mkdir, rm, stat as fspStat } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, open, rm, stat as fspStat } from "node:fs/promises";
 import { existsSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
@@ -18,11 +18,13 @@ import { createHash } from "node:crypto";
 import { createQualityTracker, withWindow } from "./quality.mjs";
 import {
   addTokens,
+  clip,
   countShellKinds,
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
   longestRun,
+  own,
   toolKey,
 } from "./transcript-utils.mjs";
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
@@ -67,13 +69,13 @@ function askText(tool, input) {
 /** What went wrong with a call, if anything: a denial, a wait on the user, or a failure. */
 function incidentOf(j, tr, body, call, tsMs) {
   const base = { t: tsMs, tool: call?.tool ?? null, ...(call?.command ? { command: call.command } : {}) };
-  if (typeof j.toolDenialKind === "string") return { ...base, kind: "denial", denial: j.toolDenialKind, text: body.slice(0, 300) };
+  if (typeof j.toolDenialKind === "string") return { ...base, kind: "denial", denial: j.toolDenialKind, text: clip(body, 300) };
   if (call && WAIT_TOOLS.has(call.tool) && tsMs && call.tsMs && tsMs >= call.tsMs) {
     return { t: call.tsMs, tool: call.tool, kind: "wait", ms: tsMs - call.tsMs, ...(call.ask ? { text: call.ask } : {}) };
   }
   if (!tr.is_error || !body) return null;
   const { text, noise } = stripNoise(body);
-  return { ...base, kind: "error", text: text.slice(0, 300), ...(noise.length ? { noise } : {}) };
+  return { ...base, kind: "error", text: clip(text, 300), ...(noise.length ? { noise } : {}) };
 }
 
 /** "Bash: pnpm test", "Edit: src/App.tsx": the call a session is running or asking to run. */
@@ -333,6 +335,8 @@ function dropUnreadFiles() {
 
 /** How many parsed transcripts the cache holds (tests). */
 export const cachedTranscriptCount = () => transcriptCache.size;
+/** Light reads of Claude Code transcripts so far: from the start, or of what was appended (tests). */
+export const claudeReads = { whole: 0, appended: 0 };
 
 /**
  * What the server keeps of a parsed transcript between parses: what the list, the recommendations
@@ -360,7 +364,12 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude", l
   let st;
   try { st = await fspStat(path); } catch { transcriptCache.delete(path); return null; }
   const hit = cached && transcriptCache.get(path);
-  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.light === light) return hit.data;
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.light === light) {
+    // Not written to for a while: its parser goes, the light copy stays.
+    if (hit.parser && Date.now() - st.mtimeMs > HOT_MS) hit.parser = null;
+    return hit.data;
+  }
+  if (cached && light && agent === "claude") return readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
   const parsed =
     agent === "codex" ? await parseCodexRollout(path)
     : agent === "copilot" ? await parseCopilotEvents(path)
@@ -371,15 +380,92 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude", l
   return data;
 }
 
+/** A transcript written to this recently keeps its parser between light parses, which then read only what was appended. */
+const HOT_MS = 10 * 60_000;
+/** Bytes compared at the start of a transcript and before the end of what was read: they tell an append from a rewrite. */
+const MARK_BYTES = 64;
+const READ_CHUNK = 1 << 20;
+
 /**
- * One pass over a Claude Code transcript (.jsonl).
+ * A light read of a Claude Code transcript. While it is being written (`HOT_MS`), its parser stays
+ * in the cache entry and the next read feeds it only the lines appended since; a file replaced or
+ * rewritten (another inode, shorter, other bytes where the last read started or ended) is read again.
+ */
+async function readClaudeLight(path, st, sidechain, hit) {
+  const resume = !!hit?.parser && st.ino === hit.ino && st.size >= hit.offset && (await marksOf(path, hit.offset)) === hit.marks;
+  const parser = resume ? hit.parser : createTranscriptParser(sidechain);
+  const offset = await feedFrom(path, resume ? hit.offset : 0, parser);
+  claudeReads[resume ? "appended" : "whole"]++;
+  const entry = { mtimeMs: st.mtimeMs, size: st.size, light: true, data: lightTranscript(parser.result()) };
+  if (Date.now() - st.mtimeMs <= HOT_MS) Object.assign(entry, { parser, offset, ino: st.ino, marks: await marksOf(path, offset) });
+  transcriptCache.set(path, entry);
+  return entry.data;
+}
+
+/** The first bytes of a file and the last ones before `offset`. */
+async function marksOf(path, offset) {
+  const fh = await open(path, "r");
+  try {
+    const n = Math.min(MARK_BYTES, offset);
+    const head = Buffer.alloc(n);
+    const tail = Buffer.alloc(n);
+    await fh.read(head, 0, n, 0);
+    await fh.read(tail, 0, n, offset - n);
+    return `${head.toString("base64")}:${tail.toString("base64")}`;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Feeds the lines of a transcript from byte `from` to its end into `parser`, and returns the offset
+ * after the last line read. A last line without its newline is read when it is whole JSON, as
+ * readline would; one still being written is left for the next read.
+ */
+async function feedFrom(path, from, parser) {
+  const fh = await open(path, "r");
+  try {
+    const chunk = Buffer.allocUnsafe(READ_CHUNK);
+    let offset = from;
+    let pending = Buffer.alloc(0);
+    for (let pos = from; ; ) {
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, pos);
+      if (bytesRead === 0) break;
+      pos += bytesRead;
+      const buf = pending.length ? Buffer.concat([pending, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      let start = 0;
+      for (let nl = buf.indexOf(10); nl !== -1; nl = buf.indexOf(10, start)) {
+        feedLine(parser, buf.toString("utf8", start, nl));
+        start = nl + 1;
+      }
+      offset += start;
+      pending = Buffer.from(buf.subarray(start));
+    }
+    if (pending.length) {
+      let j;
+      try { j = JSON.parse(pending.toString("utf8")); } catch { return offset; }
+      parser.line(j);
+      offset += pending.length;
+    }
+    return offset;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Reads a Claude Code transcript (.jsonl) one parsed line at a time (`line`); `result` says what the
+ * lines so far add up to and leaves the parser as it was, so lines appended later can follow.
  *
  * Claude Code writes one line per content block (thinking / text / tool_use),
  * each repeating the message id and its full `usage`. Lines are merged into a
  * single turn per API message (id, else requestId); the last line's usage wins
  * (it carries the final output_tokens). Summing lines would double-count.
+ *
+ * What it keeps across lines is copied (`clip`, `own`): a server keeps the parser of a transcript
+ * that is still being written, and a slice would keep every tool output it was cut from.
  */
-async function parseTranscriptFile(path, sidechain) {
+function createTranscriptParser(sidechain) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
@@ -420,11 +506,7 @@ async function parseTranscriptFile(path, sidechain) {
   // Sub-agent transcripts are scored as part of nothing: quality is about the main context.
   const quality = sidechain ? null : createQualityTracker();
 
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    let j;
-    try { j = JSON.parse(line); } catch { continue; }
+  function line(j) {
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
@@ -436,7 +518,7 @@ async function parseTranscriptFile(path, sidechain) {
       else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
     }
     const msg = j.message;
-    if (!msg) continue;
+    if (!msg) return;
     const tsMs = j.timestamp ? new Date(j.timestamp).getTime() : null;
     if (tsMs) {
       if (firstTs === null) firstTs = tsMs;
@@ -445,7 +527,7 @@ async function parseTranscriptFile(path, sidechain) {
     }
 
     if (msg.role === "assistant") {
-      if (msg.model === "<synthetic>") continue;
+      if (msg.model === "<synthetic>") return;
       const key = msg.id || j.requestId || `line-${turns.length}-${tsMs}`;
       let turn = turnById.get(key);
       if (!turn) {
@@ -458,7 +540,7 @@ async function parseTranscriptFile(path, sidechain) {
           tools: [],
           inBytes: pendingInBytes,
           outBytes: 0,
-          inPreview: pendingInPreview.slice(0, 240),
+          inPreview: clip(pendingInPreview, 240),
           outPreview: "",
           ...(sidechain ? { sidechain: true } : {}),
         };
@@ -482,7 +564,7 @@ async function parseTranscriptFile(path, sidechain) {
       for (const c of content) {
         if (c.type === "text" && typeof c.text === "string") {
           turn.outBytes += c.text.length;
-          if (!turn.outPreview) turn.outPreview = c.text.slice(0, 240);
+          if (!turn.outPreview) turn.outPreview = clip(c.text, 240);
         }
         if (c.type !== "tool_use" || typeof c.name !== "string") continue;
         if (c.id) {
@@ -491,7 +573,7 @@ async function parseTranscriptFile(path, sidechain) {
         }
         const name = toolKey(c.name);
         const input = c.input ?? {};
-        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? input.command.slice(0, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: askText(c.name, input) });
+        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
         if (c.id) lastCallId = c.id;
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
@@ -518,14 +600,14 @@ async function parseTranscriptFile(path, sidechain) {
           else if (typeof input.pattern === "string") preview = input.pattern;
           else if (typeof input.prompt === "string") { preview = input.prompt; full = input.prompt; }
           else preview = Object.keys(input).join(", ");
-          const entry = { tsMs, tool: c.name, preview: preview.slice(0, 160), id: c.id };
-          if (full && full.length > 160) entry.full = full.slice(0, 8000);
+          const entry = { tsMs, tool: c.name, preview: clip(preview, 160), id: c.id };
+          if (full && full.length > 160) entry.full = clip(full, 8000);
           toolSequence.push(entry);
         }
       }
     } else if (msg.role === "user") {
       if (j.isCompactSummary) quality?.onCompaction();
-      if (j.isMeta || j.isCompactSummary) continue;
+      if (j.isMeta || j.isCompactSummary) return;
       const content = msg.content;
       let text = null;
       if (typeof content === "string") text = content;
@@ -551,7 +633,7 @@ async function parseTranscriptFile(path, sidechain) {
             if (!body) continue;
             quality?.onToolResult(tr.tool_use_id, body.length);
             resultById.set(tr.tool_use_id, {
-              text: body.slice(0, 240),
+              text: clip(body, 240),
               truncated: body.length > 240,
               isError: !!tr.is_error,
               bytes: body.length,
@@ -559,19 +641,19 @@ async function parseTranscriptFile(path, sidechain) {
             pendingInBytes += body.length;
             if (!pendingInPreview) pendingInPreview = `[tool_result] ${body.slice(0, 200)}`;
           }
-          continue;
+          return;
         }
         const textPart = content.find((c) => c && c.type === "text");
         if (textPart?.text) text = textPart.text;
-      } else continue;
+      } else return;
       // Sub-agent transcripts start with the parent's instructions, not a user prompt.
       if (sidechain || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
         if (sidechain && text && subPrompt === null) {
-          subPrompt = text.slice(0, 1500);
+          subPrompt = clip(text, 1500);
           subBrief = briefOf(text);
         }
-        continue;
+        return;
       }
       userMessages++;
       if (!firstUserText && text) firstUserText = text;
@@ -581,58 +663,80 @@ async function parseTranscriptFile(path, sidechain) {
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
       if (prompts.length < 100 && text) {
-        prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+        prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
       }
     }
   }
 
-  for (const entry of toolSequence) {
-    if (entry.id && resultById.has(entry.id)) entry.result = resultById.get(entry.id);
-    if (entry.id && agentIdByToolUse.has(entry.id)) entry.agentId = agentIdByToolUse.get(entry.id);
-  }
-  // runningTool: latest tool_use in sequence without a result yet
-  let runningTool = null;
-  for (let i = toolSequence.length - 1; i >= 0; i--) {
-    const entry = toolSequence[i];
-    if (entry.id && !entry.result) {
-      runningTool = { tool: entry.tool, preview: entry.preview, tsMs: entry.tsMs };
-      break;
+  function result() {
+    // Each call with its result and the sub-agent it ran, on copies: the parser keeps its entries.
+    const calls = toolSequence.map(({ id, ...entry }) => ({
+      ...entry,
+      ...(id && resultById.has(id) ? { result: resultById.get(id) } : {}),
+      ...(id && agentIdByToolUse.has(id) ? { agentId: agentIdByToolUse.get(id) } : {}),
+    }));
+    // runningTool: latest tool_use in sequence without a result yet
+    let runningTool = null;
+    for (let i = toolSequence.length - 1; i >= 0; i--) {
+      if (toolSequence[i].id && !calls[i].result) {
+        runningTool = { tool: calls[i].tool, preview: calls[i].preview, tsMs: calls[i].tsMs };
+        break;
+      }
+      if (calls[i].result) break;
     }
-    if (entry.result) break;
-  }
-  for (const entry of toolSequence) delete entry.id;
 
-  const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
-  return {
-    longestRunMs: sidechain ? 0 : longestRun([...turns.map((tu) => tu.tsMs), ...absEvents.filter((e) => e.kind === "prompt").map((e) => e.tsMs)]),
-    tokens,
-    toolCounts,
-    absEvents,
-    prompts,
-    toolSequence,
-    turns,
-    assistantMessages: turns.length,
-    userMessages,
-    commits,
-    shell,
-    model,
-    firstTs,
-    lastTs,
-    activeMs,
-    cwd,
-    firstUserText,
-    pathByHash,
-    runningTool,
-    customTitle,
-    version,
-    incidents,
-    toolResults: resultCount,
-    pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
-    lastCall: lastCallId ? callById.get(lastCallId) : null,
-    quality: quality?.finish(turns) ?? null,
-    context: context.finish(),
-    ...(sidechain ? { agentId, subPrompt, subBrief } : {}),
-  };
+    const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
+    return {
+      longestRunMs: sidechain ? 0 : longestRun([...turns.map((tu) => tu.tsMs), ...absEvents.filter((e) => e.kind === "prompt").map((e) => e.tsMs)]),
+      tokens,
+      toolCounts,
+      absEvents,
+      prompts,
+      toolSequence: calls,
+      turns,
+      assistantMessages: turns.length,
+      userMessages,
+      commits,
+      shell,
+      model,
+      firstTs,
+      lastTs,
+      activeMs,
+      cwd,
+      firstUserText,
+      pathByHash,
+      runningTool,
+      customTitle,
+      version,
+      incidents,
+      toolResults: resultCount,
+      pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
+      lastCall: lastCallId ? callById.get(lastCallId) : null,
+      quality: quality?.finish(turns) ?? null,
+      context: context.finish(),
+      ...(sidechain ? { agentId, subPrompt, subBrief } : {}),
+    };
+  }
+
+  return { line, result };
+}
+
+/** A transcript line into `parser`; blank and unreadable lines are skipped. */
+function feedLine(parser, text) {
+  if (!text.trim()) return;
+  let j;
+  try { j = JSON.parse(text); } catch { return; }
+  parser.line(j);
+}
+
+/**
+ * One pass over a Claude Code transcript: `createTranscriptParser` fed every line. Lines end at
+ * `\n` only (`feedFrom`): readline also ends them at U+2028 and U+2029, which JSON strings may hold.
+ */
+async function parseTranscriptFile(path, sidechain) {
+  const parser = createTranscriptParser(sidechain);
+  await feedFrom(path, 0, parser);
+  return parser.result();
 }
 
 function relativizeEvents(absEvents, startedAt) {
