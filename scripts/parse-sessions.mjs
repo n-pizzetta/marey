@@ -301,10 +301,20 @@ async function readHistoryBySession() {
 
 /** Parsed transcripts keyed by path, reused while the file's mtime and size are unchanged. */
 const transcriptCache = new Map();
+/** Paths read by the parse in progress: once it ends, the others (deleted or skipped files) leave the cache. */
+let readThisParse = new Set();
+
+function dropUnreadTranscripts() {
+  for (const path of transcriptCache.keys()) if (!readThisParse.has(path)) transcriptCache.delete(path);
+}
+
+/** How many parsed transcripts the cache holds (tests). */
+export const cachedTranscriptCount = () => transcriptCache.size;
 
 async function readTranscriptFile(path, { sidechain = false, agent = "claude" } = {}) {
+  readThisParse.add(path);
   let st;
-  try { st = await fspStat(path); } catch { return null; }
+  try { st = await fspStat(path); } catch { transcriptCache.delete(path); return null; }
   const cached = transcriptCache.get(path);
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.data;
   const data =
@@ -1156,11 +1166,13 @@ function markUnpriced(s) {
  * provider-limits.mjs) }. Used by scripts/api.mjs and by `pnpm parse`.
  */
 export async function parseAllSessions() {
+  readThisParse = new Set();
   const modelOverrides = await loadModelOverrides();
   const codexIndex = await indexCodexRollouts();
   const copilotIndex = await indexCopilotSessions();
   const readings = { codex: null, copilot: null };
   if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0 && copilotIndex.size === 0) {
+    dropUnreadTranscripts();
     return { sessions: [], errors: [], modelOverrides, readings };
   }
 
@@ -1241,6 +1253,7 @@ export async function parseAllSessions() {
   reassignLiveToChainTail(all);
   for (const s of all) markUnpriced(s);
   await applyContextWindows(all);
+  dropUnreadTranscripts();
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
 }

@@ -122,7 +122,7 @@ Sessions are returned sorted by `startedAt` descending. Helpers shared by both p
 - Caps: prompt texts (first 100, truncated), tool sequence (first 300 entries per transcript, previews truncated), result previews.
 - File paths from tool inputs are hashed (`sha256(path)` first 16 hex chars) to label `file-history` entries; unmatched hashes are shown without a path.
 
-`readTranscriptFile` caches parsed results in `transcriptCache`, keyed by path and invalidated when `mtime` or `size` changes, so periodic re-parses only re-read transcripts that grew.
+`readTranscriptFile` caches parsed results in `transcriptCache`, keyed by path and invalidated when `mtime` or `size` changes, so periodic re-parses only re-read transcripts that grew. A transcript the parse did not read (deleted, or a Codex rollout already built from `~/.claude`) leaves the cache when the parse ends.
 
 ### Codex rollouts (`scripts/codex.mjs`)
 
