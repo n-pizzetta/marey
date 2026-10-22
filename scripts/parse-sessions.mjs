@@ -52,6 +52,7 @@ const PLUGIN_CACHE_DIR = join(DATA, "cache");
 
 /** User-role lines that are not prompts the user typed. */
 const NON_PROMPT_RE = /^\s*(<(command-|local-command-|task-notification|system-reminder)|\[Request interrupted|Caveat:)/;
+const INTERRUPTED_RE = /^\s*\[Request interrupted/;
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
@@ -85,6 +86,28 @@ function describeCall(call) {
   if (call.command) return `${call.tool}: ${call.command.split("\n")[0].replace(/^cd\s+\S+\s*&&\s*/, "").slice(0, 120)}`;
   if (call.file) return `${call.tool}: ${call.file.split("/").pop()}`;
   return call.tool;
+}
+
+/** A sub-agent that hasn't ended its turn but has written nothing for this long was stopped. */
+const SUBAGENT_STALE_MS = 30 * 60_000;
+
+/**
+ * A running Claude Code session's sub-agents at a glance: those at work, oldest first, with their last
+ * call, and how many are done. One that hasn't ended its turn but has written nothing for
+ * SUBAGENT_STALE_MS was stopped (killed, or interrupted with its session) and counts as done.
+ */
+export function liveSubagentsOf(subs, now) {
+  const running = subs
+    .filter((sub) => !sub.ended && sub.lastTs && now - sub.lastTs <= SUBAGENT_STALE_MS)
+    .sort((a, b) => (a.firstTs ?? 0) - (b.firstTs ?? 0))
+    .map((sub) => ({
+      id: sub.agentId ?? null,
+      name: sub.agentName ?? sub.agentType ?? "sub-agent",
+      description: sub.description ?? null,
+      startedAt: new Date(sub.firstTs ?? sub.lastTs).toISOString(),
+      call: describeCall(sub.lastCall),
+    }));
+  return { running, done: subs.length - running.length };
 }
 
 /** The start of the last thing the main thread said. */
@@ -485,6 +508,8 @@ function createTranscriptParser(sidechain) {
   let agentId = null;
   let subPrompt = null;
   let subBrief = null;
+  // Whether the last turn ended: a reply with no call, a call that ends it (SubagentHandback) or an interruption.
+  let ended = false;
   // What the Context page shows: instruction files loaded, memory read and written, files written.
   const context = createContextCollector();
   let userMessages = 0;
@@ -602,6 +627,8 @@ function createTranscriptParser(sidechain) {
           toolSequence.push(entry);
         }
       }
+      if (content.some((c) => c.type === "tool_use")) ended = false;
+      else if (msg.stop_reason === "end_turn") ended = true;
     } else if (msg.role === "user") {
       if (j.isCompactSummary) quality?.onCompaction();
       if (j.isMeta || j.isCompactSummary) return;
@@ -611,6 +638,7 @@ function createTranscriptParser(sidechain) {
       else if (Array.isArray(content)) {
         const toolResults = content.filter((c) => c && c.type === "tool_result");
         if (toolResults.length > 0) {
+          ended = !!j.toolEndsTurn;
           const ranAgent = typeof j.toolUseResult?.agentId === "string" ? j.toolUseResult.agentId : null;
           for (const tr of toolResults) {
             if (!tr.tool_use_id) continue;
@@ -643,6 +671,7 @@ function createTranscriptParser(sidechain) {
         const textPart = content.find((c) => c && c.type === "text");
         if (textPart?.text) text = textPart.text;
       } else return;
+      ended = !!text && INTERRUPTED_RE.test(text);
       // Sub-agent transcripts start with the parent's instructions, not a user prompt.
       if (sidechain || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
@@ -711,7 +740,7 @@ function createTranscriptParser(sidechain) {
       lastCall: lastCallId ? callById.get(lastCallId) : null,
       quality: quality?.finish(turns) ?? null,
       context: context.finish(),
-      ...(sidechain ? { agentId, subPrompt, subBrief } : {}),
+      ...(sidechain ? { agentId, subPrompt, subBrief, ended } : {}),
     };
   }
 
@@ -1077,6 +1106,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
+        description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
         calls: relativizeToolSequence(sub.toolSequence ?? [], startedAtMs),
@@ -1087,6 +1117,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       ? {
           liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: t?.lastReplyText ?? lastReply(mainTurns), lastTs, now }),
           ...(live?.name ? { liveName: live.name } : {}),
+          ...(agent === "claude" && subs.length ? { liveSubagents: liveSubagentsOf(subs, now) } : {}),
         }
       : {}),
     runningTool: isLive && t?.runningTool
@@ -1497,6 +1528,7 @@ export function summarizeSession(s) {
     runningTool: s.runningTool ?? null,
     liveState: s.liveState ?? null,
     liveName: s.liveName,
+    liveSubagents: s.liveSubagents,
     version: s.version,
     contextWindow: s.contextWindow,
     aiCredits: s.aiCredits,

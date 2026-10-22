@@ -60,8 +60,18 @@ export interface ToolCall {
   children?: ToolCall[];
   /** The sub-agent's type and description, when Claude Code wrote them. */
   agentLabel?: string;
+  /** The id of the sub-agent this call started (its transcript's), as in `liveSubagents`. */
+  subagentId?: string;
   /** A sub-agent whose starting call wasn't found: this row stands for it and is not a call itself. */
   orphan?: boolean;
+}
+
+/** A running session's sub-agents (scripts/parse-sessions.mjs, liveSubagentsOf). */
+export interface LiveSubagents {
+  /** Oldest first. `call`: the last call it made ("Bash: pnpm test"). */
+  running: Array<{ id: string | null; name: string; description: string | null; startedAt: string; call: string | null }>;
+  /** Finished, or stopped before finishing. */
+  done: number;
 }
 
 /** needs-you: an open question, plan or permission prompt; your-turn: done, waiting for a prompt; working: busy. */
@@ -134,6 +144,8 @@ export interface Session {
   liveState?: LiveState | null;
   /** Running Claude Code sessions: the name Claude Code gives them (pid file). */
   liveName?: string;
+  /** Running Claude Code sessions with sub-agents: those at work and how many are done. */
+  liveSubagents?: LiveSubagents;
   clearedFrom?: string;
   clearedInto?: string;
   quality?: SessionQuality | null;

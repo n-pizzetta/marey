@@ -129,6 +129,8 @@ function App() {
   const [parseErrors, setParseErrors] = useState<string[] | undefined>();
   const [page, setPage] = useState<Page>(initial.page && PAGE_IDS.includes(initial.page) ? initial.page : "now");
   const [selectedId, setSelectedIdInternal] = useState<string | null>(initial.id ?? null);
+  // A sub-agent picked on Now: its session opens on the sub-agent's calls.
+  const [subagentFocus, setSubagentFocus] = useState<{ sessionId: string; agentId: string } | null>(null);
   const [filter, setFilter] = useState<FilterId>(initial.filter ?? "all");
   const [preferredProvider, setPreferredProvider] = useState<Provider>(isProvider(initial.provider) ? initial.provider : "all");
   const [projectFilter, setProjectFilter] = useState<string | null>(initial.project ?? null);
@@ -409,6 +411,10 @@ function App() {
             providers={providers}
             limits={limits}
             onSelectSession={setSelectedId}
+            onSelectSubagent={(sessionId, agentId) => {
+              setSubagentFocus({ sessionId, agentId });
+              setSelectedId(sessionId);
+            }}
             onShowAllSessions={() => setPage("sessions")}
             onOpenWindow={() => setPage("usage")}
           />
@@ -508,6 +514,7 @@ function App() {
             hasNext={selectedIdx >= 0 && selectedIdx < filtered.length - 1}
             position={selectedIdx + 1}
             total={filtered.length}
+            focusSubagent={subagentFocus?.sessionId === selected.id ? subagentFocus.agentId : null}
           />
           </ErrorBoundary>
         </div>
