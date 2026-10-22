@@ -1106,6 +1106,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
+        description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
         calls: relativizeToolSequence(sub.toolSequence ?? [], startedAtMs),
