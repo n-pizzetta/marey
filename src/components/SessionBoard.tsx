@@ -1,5 +1,5 @@
-import type { KeyboardEvent } from "react";
-import type { LiveState, Session } from "../types";
+import { useState, type KeyboardEvent } from "react";
+import type { LiveState, LiveSubagents, Session } from "../types";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { useNow } from "../utils/useNow";
 import { runningSessions } from "../utils/liveState";
@@ -50,6 +50,36 @@ function elapsed(since: string, now: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h} h ${String(m % 60).padStart(2, "0")}`;
   return `${Math.floor(h / 24)} d`;
+}
+
+/** Sub-agents listed under a session before "+ n more". */
+const SHOWN_SUBAGENTS = 8;
+
+/** A session's sub-agents at work, under its row: name, task, last call and time since it started. */
+function SubagentList({ subs, now }: { subs: LiveSubagents; now: number }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? subs.running : subs.running.slice(0, SHOWN_SUBAGENTS);
+  const more = subs.running.length - shown.length;
+  return (
+    <div className="board-subs">
+      <div className="board-subs-head tabular">
+        {subs.running.length} sub-agent{subs.running.length > 1 ? "s" : ""} running{subs.done > 0 && ` · ${subs.done} done`}
+      </div>
+      <ul>
+        {shown.map((a, i) => (
+          <li key={a.id ?? i} className="board-sub">
+            <span className="board-sub-name mono">{a.name}</span>
+            <span className="board-sub-task">
+              <span className="board-sub-desc" title={a.description ?? undefined}>{a.description}</span>
+              <span className="board-sub-call mono" title={a.call ?? undefined}>{a.call}</span>
+            </span>
+            <span className="board-sub-since mono tabular" title={`Started ${new Date(a.startedAt).toLocaleTimeString()}`}>{elapsed(a.startedAt, now)}</span>
+          </li>
+        ))}
+      </ul>
+      {more > 0 && <button className="board-subs-more" onClick={() => setAll(true)}>+ {more} more</button>}
+    </div>
+  );
 }
 
 /** Every running session, grouped by what it needs from you; the longest wait first. */
@@ -107,6 +137,7 @@ export function SessionBoard({ sessions, onSelectSession, usage, showProvider = 
                         <button className="board-open" onClick={(e) => { e.stopPropagation(); openTerminal(s.id); }}>Open terminal</button>
                       ) : <span />}
                     </div>
+                    {!!s.liveSubagents?.running.length && <SubagentList subs={s.liveSubagents} now={now} />}
                   </li>
                 );
               })}
