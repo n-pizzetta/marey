@@ -8,7 +8,15 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Added
 
-- On Now, a running Claude Code session lists its sub-agents at work under its row: name, task, last call and how long each has run, and how many are done.
+- On Now, a running Claude Code session lists its sub-agents at work under its row: name, task, last call and how long each has run, and how many are done. Click one to see its calls.
+
+### Changed
+
+- In a session, the header scrolls away and the tabs stay on top, leaving the room below them to the tab.
+
+### Fixed
+
+- In a long session's Tools tab, a sub-agent's calls could sit under the call that started another sub-agent.
 
 ### Planned
 

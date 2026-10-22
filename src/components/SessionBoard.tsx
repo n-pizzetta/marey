@@ -11,6 +11,8 @@ import "../plan.css";
 interface Props {
   sessions: Session[];
   onSelectSession: (id: string) => void;
+  /** A sub-agent at work: open its session on its calls. */
+  onSelectSubagent?: (sessionId: string, agentId: string) => void;
   /** Each running session's share of its plan. */
   usage?: Map<string, RowUsage>;
   /** Name the provider on each row (several providers on the board). */
@@ -55,8 +57,8 @@ function elapsed(since: string, now: number): string {
 /** Sub-agents listed under a session before "+ n more". */
 const SHOWN_SUBAGENTS = 8;
 
-/** A session's sub-agents at work, under its row: name, task, last call and time since it started. */
-function SubagentList({ subs, now }: { subs: LiveSubagents; now: number }) {
+/** A session's sub-agents at work, under its row: name, task, last call and time since it started. Each opens onto its calls. */
+function SubagentList({ subs, now, onOpen }: { subs: LiveSubagents; now: number; onOpen: (agentId: string | null) => void }) {
   const [all, setAll] = useState(false);
   const shown = all ? subs.running : subs.running.slice(0, SHOWN_SUBAGENTS);
   const more = subs.running.length - shown.length;
@@ -67,7 +69,15 @@ function SubagentList({ subs, now }: { subs: LiveSubagents; now: number }) {
       </div>
       <ul>
         {shown.map((a, i) => (
-          <li key={a.id ?? i} className="board-sub">
+          <li
+            key={a.id ?? i}
+            className="board-sub"
+            role="button"
+            tabIndex={0}
+            title="Show its calls"
+            onClick={() => onOpen(a.id)}
+            onKeyDown={(e) => { if (e.key === "Enter") onOpen(a.id); }}
+          >
             <span className="board-sub-name mono">{a.name}</span>
             <span className="board-sub-task">
               <span className="board-sub-desc" title={a.description ?? undefined}>{a.description}</span>
@@ -83,7 +93,7 @@ function SubagentList({ subs, now }: { subs: LiveSubagents; now: number }) {
 }
 
 /** Every running session, grouped by what it needs from you; the longest wait first. */
-export function SessionBoard({ sessions, onSelectSession, usage, showProvider = false, hovered = null, onHover }: Props) {
+export function SessionBoard({ sessions, onSelectSession, onSelectSubagent, usage, showProvider = false, hovered = null, onHover }: Props) {
   const now = useNow(15_000);
   const live = runningSessions(sessions);
   const open = (id: string) => (e: KeyboardEvent) => { if (e.key === "Enter") onSelectSession(id); };
@@ -137,7 +147,13 @@ export function SessionBoard({ sessions, onSelectSession, usage, showProvider = 
                         <button className="board-open" onClick={(e) => { e.stopPropagation(); openTerminal(s.id); }}>Open terminal</button>
                       ) : <span />}
                     </div>
-                    {!!s.liveSubagents?.running.length && <SubagentList subs={s.liveSubagents} now={now} />}
+                    {!!s.liveSubagents?.running.length && (
+                      <SubagentList
+                        subs={s.liveSubagents}
+                        now={now}
+                        onOpen={(agentId) => (agentId && onSelectSubagent ? onSelectSubagent(s.id, agentId) : onSelectSession(s.id))}
+                      />
+                    )}
                   </li>
                 );
               })}

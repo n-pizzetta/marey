@@ -7,7 +7,7 @@ import { KpiRow } from "./Kpi";
 import { freshTokens, useUnit, type Unit } from "../utils/units";
 import { promptWeights } from "../utils/promptShare";
 import { cacheHit, inputTokens, projectColor } from "../utils/fleetStats";
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createPatch } from "diff";
 import type { Session, SessionQuality, ToolCall, ToolName } from "../types";
 import { callsBetween, callsPerPrompt, countCalls, countFailed, countSubCalls, flattenCalls, onlyFailed } from "../utils/toolCalls";
@@ -196,6 +196,8 @@ interface Props {
   hasNext?: boolean;
   position?: number;
   total?: number;
+  /** Open on the Tools tab, with the calls of this sub-agent (its id) shown. */
+  focusSubagent?: string | null;
 }
 
 type Tab = "overview" | "timeline" | "tools" | "tokens" | "files";
@@ -243,8 +245,21 @@ export function SessionDetail({
   hasNext = false,
   position,
   total,
+  focusSubagent = null,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(focusSubagent ? "tools" : "overview");
+  // One scroll for the whole view: the header scrolls away under the tabs, which stay on top.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  // past the header, another tab starts at its top, right under the tabs
+  const showTab = (to: Tab) => {
+    setTab(to);
+    const root = rootRef.current;
+    const top = topRef.current;
+    if (!root || !top) return;
+    const below = top.offsetTop + top.offsetHeight;
+    if (root.scrollTop > below) root.scrollTop = below;
+  };
   const [toolFocus, setToolFocus] = useState<{ promptIdx: number; start: number; end: number } | null>(null);
   // a link from the Overview into the Tokens tab, consumed once it has scrolled there
   const [tokensFocus, setTokensFocus] = useState<TokensFocus | null>(null);
@@ -279,22 +294,22 @@ export function SessionDetail({
 
   const focusToolsForPrompt = (promptIdx: number, start: number, end: number) => {
     setToolFocus({ promptIdx, start, end });
-    setTab("tools");
+    showTab("tools");
   };
   // the Overview's summaries open their tab; the API value one lands on Tokens › By kind
   const openFromOverview = (to: OverviewLink) => {
     if (to === "tokens") setTokensFocus({ section: "kind" });
     if (to === "tools") setToolFocus(null);
-    setTab(to);
+    showTab(to);
   };
   const openPromptCost = (idx: number) => {
     setTokensFocus({ section: "prompt", idx });
-    setTab("tokens");
+    showTab("tokens");
   };
 
   return (
-    <div className={`detail ${fullscreen ? "fullscreen" : ""}`} key={session.id}>
-      <div className="detail-sticky">
+    <div className={`detail ${fullscreen ? "fullscreen" : ""}`} key={session.id} ref={rootRef}>
+      <div className="detail-top" ref={topRef}>
         <div className="detail-toolbar">
           <div className="detail-nav">
             <button
@@ -408,14 +423,16 @@ export function SessionDetail({
           <ClearedBanner session={session} />
         )}
         {session.ghost && <GhostBanner session={session} />}
+      </div>
 
+      <div className="detail-tabs-bar">
         <div className="tabs">
           {TABS.map((t) => (
             <button
               key={t.id}
               className={`tab ${tab === t.id ? "active" : ""}`}
               onMouseDown={keepFocus}
-              onClick={() => setTab(t.id)}
+              onClick={() => showTab(t.id)}
             >
               <svg className="tab-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
                 {t.icon}
@@ -439,7 +456,7 @@ export function SessionDetail({
         )}
         {tab === "timeline" && <TimelineTab session={session} onFocusTools={focusToolsForPrompt} />}
         {tab === "tools" && (
-          <ToolsTab session={session} focus={toolFocus} onClearFocus={() => setToolFocus(null)} />
+          <ToolsTab session={session} focus={toolFocus} onClearFocus={() => setToolFocus(null)} focusSubagent={focusSubagent} />
         )}
         {tab === "tokens" && <TokensTab session={session} focus={tokensFocus} onFocusDone={clearTokensFocus} />}
         {tab === "files" && <FilesTab session={session} />}
@@ -785,12 +802,22 @@ function ToolsTab({
   session,
   focus,
   onClearFocus,
+  focusSubagent,
 }: {
   session: Session;
   focus: { promptIdx: number; start: number; end: number } | null;
   onClearFocus: () => void;
+  /** A sub-agent picked on Now: the call that started it opens onto its calls, scrolled into view once. */
+  focusSubagent: string | null;
 }) {
   const [failedOnly, setFailedOnly] = useState(false);
+  const focusRef = useRef<HTMLDivElement>(null);
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusSubagent || scrolledTo.current === focusSubagent || !focusRef.current) return;
+    focusRef.current.scrollIntoView({ block: "start" });
+    scrolledTo.current = focusSubagent;
+  });
   const sortedTools = (Object.entries(session.toolCounts) as Array<[ToolName, number]>)
     .filter(([, v]) => v > 0)
     .sort(([, a], [, b]) => b - a);
@@ -849,15 +876,19 @@ function ToolsTab({
             <div className="placeholder">No tool sequence available. The By tool card has the counts.</div>
           ) : (
             <div className="tool-sequence">
-              {sequence.map((s, i) => (
-                <ToolSeqRow
-                  key={`${s.t}-${i}`}
-                  entry={s}
-                  startedAt={session.startedAt}
-                  pending={!!session.live && i === 0 && !s.result && !s.orphan && !failedOnly}
-                  openSub={failedOnly}
-                />
-              ))}
+              {sequence.map((s, i) => {
+                const picked = !!focusSubagent && s.subagentId === focusSubagent;
+                return (
+                  <ToolSeqRow
+                    key={`${s.t}-${i}`}
+                    entry={s}
+                    startedAt={session.startedAt}
+                    pending={!!session.live && i === 0 && !s.result && !s.orphan && !failedOnly}
+                    openSub={failedOnly || picked}
+                    rowRef={picked ? focusRef : undefined}
+                  />
+                );
+              })}
               {truncated && (
                 <div className="mono dim" style={{ padding: "8px 10px", fontSize: "var(--fs-sm)" }}>
                   (later tool calls truncated — showing the first 300 of each transcript)
@@ -898,12 +929,15 @@ function ToolSeqRow({
   startedAt,
   pending,
   openSub = false,
+  rowRef,
 }: {
   entry: ToolCall;
   startedAt: string;
   pending?: boolean;
-  /** Start with the sub-agent's calls shown (the failed-only view). */
+  /** Start with the sub-agent's calls shown (the failed-only view, a sub-agent picked on Now). */
   openSub?: boolean;
+  /** Set on the row of a sub-agent picked on Now. */
+  rowRef?: Ref<HTMLDivElement>;
 }) {
   const [open, setOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(openSub);
@@ -918,7 +952,7 @@ function ToolSeqRow({
   // newest first, like the calls around them; the newest one runs while its sub-agent does
   const kidsShown = [...kids].reverse();
   return (
-    <div className={`tool-seq-row ${expandable ? "has-result" : ""} ${open ? "open" : ""} ${pending ? "pending" : ""} ${entry.orphan ? "orphan" : ""}`}>
+    <div ref={rowRef} className={`tool-seq-row ${expandable ? "has-result" : ""} ${open ? "open" : ""} ${pending ? "pending" : ""} ${entry.orphan ? "orphan" : ""} ${rowRef ? "picked" : ""}`}>
       <button
         className="tool-seq-main"
         onClick={() => expandable && setOpen((v) => !v)}

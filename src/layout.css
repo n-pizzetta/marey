@@ -759,6 +759,8 @@
 .tool-seq-children { margin: 0 0 8px 102px; border-left: 2px solid var(--c-violet-dim); }
 .tool-seq-children .tool-seq-row:last-child { border-bottom: none; }
 .tool-seq-row.orphan .tool-seq-name { color: var(--c-violet); }
+/* the sub-agent picked on Now */
+.tool-seq-row.picked { box-shadow: inset 2px 0 0 var(--c-violet); background: color-mix(in srgb, var(--c-violet) 6%, transparent); }
 @media (max-width: 640px) {
   .tool-seq-sub-toggle, .tool-seq-children { margin-left: 12px; }
 }

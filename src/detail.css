@@ -17,11 +17,25 @@
   background: transparent;
 }
 /* flat toolbar: ghost buttons, the limits inline, nothing boxed */
-.session-overlay-host .detail-sticky { background: transparent; border-bottom: none; }
+.session-overlay-host .detail-top { background: transparent; border-bottom: none; }
 .session-overlay-host .detail-toolbar { padding-block: 12px 4px; background: transparent; border-bottom: none; }
 /* vertical rhythm: meta line, title and subtitle 6px apart, then 18px to the cleared / ghost banner and to the tabs, 28px from the tabs to the content */
 .session-overlay-host .detail-header { gap: 6px; padding: 16px var(--detail-pad) 0; }
-.session-overlay-host .detail-sticky > :not(.detail-toolbar):not(.detail-header):not(.tabs) { margin: 18px var(--detail-pad) 0; }
+.session-overlay-host .detail-top > :not(.detail-toolbar):not(.detail-header) { margin: 18px var(--detail-pad) 0; }
+/* one scroll for the whole view: the header scrolls away and the tabs stay on top, on the page backdrop
+   pinned to the window like the scope bar, so the content passes under them unseen */
+.session-overlay-host .detail { --tabs-bar-h: 72px; position: relative; scroll-padding-top: var(--tabs-bar-h); }
+.session-overlay-host .detail-tabs-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex: none;
+  margin-top: 6px;
+  padding: 12px var(--detail-pad) 16px;
+  background: var(--bg-ambient);
+  background-attachment: fixed;
+}
+.session-overlay-host .detail-body { flex: 1 0 auto; overflow: visible; }
 .session-overlay-host .detail-footer { padding-inline: var(--detail-pad); background: transparent; border-top: none; }
 .detail-footer .cost { color: var(--c-text); }
 
@@ -50,10 +64,10 @@
   display: flex;
   gap: 2px;
   width: fit-content;
-  max-width: calc(100% - 2 * var(--detail-pad));
+  max-width: 100%;
   height: 44px;
   overflow-x: auto;
-  margin: 18px var(--detail-pad) 22px;
+  margin: 0;
   padding: 4px;
   border-bottom: none;
   border-radius: 22px;
@@ -234,7 +248,7 @@
 /* Tools tab: the same two columns; the per-tool card stays in view while the calls scroll, and goes
    above them once the columns stack */
 .tools-grid { align-items: start; }
-.tools-grid > .overview-rail { position: sticky; top: 0; }
+.tools-grid > .overview-rail { position: sticky; top: var(--tabs-bar-h, 0); }
 @media (max-width: 1100px) {
   .tools-grid > .overview-rail { position: static; order: -1; }
 }
