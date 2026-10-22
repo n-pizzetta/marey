@@ -6,10 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-
-- The cache hit of Claude Code and Copilot CLI sessions read about 100%: it now counts cache writes, input read fresh to fill the cache, as misses.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -22,6 +18,12 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.12.1] — 2026-10-22
+
+### Fixed
+
+- The cache hit of Claude Code and Copilot CLI sessions read about 100%: it now counts cache writes, input read fresh to fill the cache, as misses.
 
 ## [0.12.0] — 2026-10-21
 
