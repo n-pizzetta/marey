@@ -1,6 +1,6 @@
 {
   "name": "marey",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Open the local Marey dashboard: plan usage, running sessions and replay for Claude Code, Codex and Copilot CLI.",
   "author": {
     "name": "Nathan Pizzetta",

@@ -6,18 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- On Now, a running Claude Code session lists its sub-agents at work under its row: name, task, last call and how long each has run, and how many are done. Click one to see its calls.
-
-### Changed
-
-- In a session, the header scrolls away and the tabs stay on top, leaving the room below them to the tab.
-
-### Fixed
-
-- In a long session's Tools tab, a sub-agent's calls could sit under the call that started another sub-agent.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -30,6 +18,20 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.13.0] — 2026-10-22
+
+### Added
+
+- On Now, a running Claude Code session lists its sub-agents at work under its row: name, task, last call and how long each has run, and how many are done. Click one to see its calls.
+
+### Changed
+
+- In a session, the header scrolls away and the tabs stay on top, leaving the room below them to the tab.
+
+### Fixed
+
+- In a long session's Tools tab, a sub-agent's calls could sit under the call that started another sub-agent.
 
 ## [0.12.1] — 2026-10-22
 
