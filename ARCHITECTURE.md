@@ -252,7 +252,7 @@ What agents have in mind at start and what they left on disk, per project. Each 
 Shared by the production server and the Vite dev server, so both expose the same routes with the same checks.
 
 **Cache and refresh.** `startApi()` parses once, then keeps the in-memory cache (`sessions`, `byId`, `errors`, serialized list + ETag) fresh:
-- `fs.watch` on `sessions/`, `usage-data/session-meta/`, `usage-data/facets/`, `marey/cache/` (missing dirs are skipped with a warning);
+- `fs.watch` on `sessions/`, `usage-data/session-meta/`, `usage-data/facets/`, `marey/cache/` (missing dirs are skipped with a warning, and a watcher that fails later, e.g. its dir removed, is dropped with one);
 - a 10 s interval (transcripts under `projects/` are not watched);
 - events are coalesced: at most one parse every 5 s (minimum 600 ms delay), and a parse requested during a parse runs right after it.
 - re-parses stop while nobody looks: with no request for the parsed sessions in 2 minutes (`idleAfter`; the dashboard only polls from a visible tab), refresh ticks and watcher events are ignored, and the next such request waits for a fresh parse. Routes the dashboard keeps polling from a hidden tab (`/api/limits`, `/api/live-context`, `/api/report-status`) don't count. The dev server passes `idleAfter: Infinity`: its UI refetches on the HMR push instead of polling.
@@ -269,13 +269,13 @@ Shared by the production server and the Vite dev server, so both expose the same
 | GET | `/api/limits` | `{ claude, codex, copilot }`: each provider's plan usage or `null` (§5). | `no-store`. |
 | GET | `/api/live-context` | `readLiveContext()`: context / prompt-cache snapshots per session, newest first. | `no-store`. |
 | GET | `/api/report-status` | Whether `usage-data/report.html` exists, and its mtime. | `no-store`. |
-| POST | `/api/ghost/:id/reveal` | Reveal the transcript in the OS file manager (`open -R`, `explorer /select`, `xdg-open` on the folder). | UUID check; POST only. |
+| POST | `/api/ghost/:id/reveal` | Reveal the transcript in the OS file manager (`open -R`, `explorer /select`, whose exit code 1 is not an error, `xdg-open` on the folder). | UUID check; POST only. |
 | POST | `/api/ghost/:id/delete` | Delete one ghost's transcript (+ `.stale` file), then re-parse. | UUID check; 409 unless currently classified ghost. |
 | POST | `/api/ghost/bulk-delete` | Body `{ ids: [...] }`; same as above for each id. | Ids filtered to valid UUIDs that are ghosts; 400 if none remain. |
 | POST | `/api/parse-error/:file/trash` | Trash an unparseable session-meta file, then re-parse. | File name must be `<uuid>.json`; POST only. |
-| GET | `/usage-report.html` | Proxies the `/insights` report (placeholder page with 404 if missing). | `Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:`. |
+| GET | `/usage-report.html` | Proxies the `/insights` report (placeholder page with 404 if missing, 500 if it can't be read). | `Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:`. |
 
-Any other `/api/*` path returns 404; non-API paths fall through to static files (prod) or Vite (dev).
+Any other `/api/*` path returns 404; non-API paths fall through to static files (prod; a file that can't be read answers 500) or Vite (dev).
 
 **Focusing a terminal** (`scripts/focus-terminal.mjs`, macOS only). One `ps -A` gives the session's process chain: the pid must still be a `claude` process, and the first ancestor inside an `.app` bundle is the host app (tmux, zellij and screen in between are refused, since the pane can't be reached). In Ghostty 1.3+, AppleScript lists every terminal's id, working directory and title, and the session's terminal is found in this order:
 1. **Title.** Claude Code shows its session title in the terminal title (`✳ <title>`, another glyph while working) and writes it to the transcript (`ai-title`, or `custom-title` after `/rename`). The latest of each is compared without the glyph; equal titles are told apart by working directory.

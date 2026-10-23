@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
-import { promises as fsp, watch, existsSync, readFileSync, statSync, createReadStream } from "node:fs";
+import { promises as fsp, watch, existsSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
 import { dataDir } from "./data-dir.mjs";
@@ -171,7 +171,9 @@ function watchClaude() {
   ];
   for (const dir of dirs) {
     try {
-      watch(dir, { recursive: false }, scheduleParse);
+      // A watched dir removed (EPERM on Windows) emits `error`, which would crash the server
+      // unheard; the periodic refresh keeps the data fresh without the watcher.
+      watch(dir, { recursive: false }, scheduleParse).on("error", (err) => console.warn(`[marey] stopped watching ${dir}: ${err.message}`));
       console.log(`[marey] watching ${dir}`);
     } catch (err) {
       console.warn(`[marey] could not watch ${dir}: ${err.message}`);
@@ -257,11 +259,16 @@ function sendJson(res, code, obj) {
 }
 
 
-function serveUsageReport(_req, res) {
+async function serveUsageReport(_req, res) {
   res.setHeader("cache-control", "no-store");
   // Generated HTML with session content, served from the API's origin: no scripts.
   res.setHeader("content-security-policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
-  if (!existsSync(REPORT_HTML)) {
+  // Read whole: a stream's error (unreadable, a folder, removed meanwhile) would crash the server.
+  let report;
+  try {
+    report = await fsp.readFile(REPORT_HTML);
+  } catch (e) {
+    if (e.code !== "ENOENT") return send(res, 500, e.message);
     const html = `<!doctype html><meta charset="utf-8"><title>No insights report yet</title>` +
       `<style>body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Inter",sans-serif;` +
       `color:#334155;background:#f8fafc;max-width:560px;margin:80px auto;padding:0 24px}` +
@@ -272,8 +279,7 @@ function serveUsageReport(_req, res) {
       `It will be written to <code>~/.claude/usage-data/report.html</code>.</p>`;
     return send(res, 404, html, HTML_TYPE);
   }
-  res.setHeader("content-type", HTML_TYPE);
-  createReadStream(REPORT_HTML).pipe(res);
+  send(res, 200, report, HTML_TYPE);
 }
 
 /**
@@ -469,7 +475,8 @@ async function handleApi(req, res) {
         : platform() === "win32" ? ["explorer", [`/select,${p}`]]
         : ["xdg-open", [dirname(p)]];
       execFile(opener, args, (err) => {
-        if (err) return send(res, 500, err.message);
+        // explorer exits with 1 even when it opened the folder.
+        if (err && !(platform() === "win32" && err.code === 1)) return send(res, 500, err.message);
         sendJson(res, 200, { revealed: p });
       });
       return;
@@ -519,7 +526,7 @@ export async function handleRequest(req, res) {
     return true;
   }
   if (path === "/usage-report.html") {
-    serveUsageReport(req, res);
+    await serveUsageReport(req, res);
     return true;
   }
   return false;
