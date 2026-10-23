@@ -25,6 +25,8 @@ import { fileURLToPath } from "node:url";
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** Copilot CLI re-runs its status line on events only: a timer keeps the cache countdown moving. */
 const COPILOT_REFRESH = 30;
+/** Ours by its folder and name, like the Claude Code wrapper in install-statusline.mjs. */
+const COPILOT_OURS = /[\\/]marey[\\/]copilot-statusline\.mjs/;
 
 export const LIMIT_ITEMS = ["five-hour-limit", "weekly-limit"];
 /** What Marey adds to Codex's status line: the share of the context window used, then the limits. */
@@ -198,8 +200,8 @@ function installCopilotStatusline(dir, state) {
   const current = copilotConfig("statusLine.command");
   if (!current) return null;
   const command = copyCopilotStatusline(dir);
-  // Set: the user's own status line, or ours (an earlier install, maybe at another path).
-  if (!current.failed && !current.out.includes("copilot-statusline.mjs")) {
+  // Set: the user's own status line, or ours (an earlier install, maybe at another spelling of its path).
+  if (!current.failed && !COPILOT_OURS.test(current.out)) {
     return `Copilot CLI: you have your own status line; to add the cache segment, run ${command} from it.`;
   }
   if (current.out === command) return "Copilot CLI: the status line already shows the context and the prompt cache.";

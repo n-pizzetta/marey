@@ -11,7 +11,7 @@
  *   2. writes a sanitized per-session snapshot (context size, prompt-cache state) to
  *      ~/.claude/marey/live/<session_id>.json for the dashboard,
  *   3. hands the untouched payload to the user's previous status line command
- *      (saved by install-statusline.mjs), or prints a minimal line if none, and appends
+ *      (saved by install-statusline.mjs, given 3 s), or prints a minimal line if none, and appends
  *      a short context / cache segment with a "compact? clear?" hint. Turn that segment
  *      off with {"verdict": false} in ~/.claude/marey/statusline.json.
  *
@@ -29,6 +29,9 @@ const LIMITS = join(DIR, "limits.json");
 const HISTORY = join(DIR, "limits-history.jsonl");
 const LIVE = join(DIR, "live");
 const HISTORY_MAX_BYTES = 512 * 1024;
+/** Set for the previous command, so a wrapper it leads back to doesn't run it again. */
+const NESTED = "MAREY_STATUSLINE";
+const PREVIOUS_TIMEOUT_MS = 3000;
 
 // Shared with the dashboard. Installed next to this file; if it is missing (older install),
 // the context features are skipped and the rest keeps working.
@@ -198,15 +201,25 @@ try {
 } catch {
   /* pass through untouched */
 }
+
+// Run by our own previous command: it was saved pointing back at this wrapper (its path spelled
+// another way), which would spawn itself forever. The outer run records and adds the segments.
+if (process.env[NESTED]) {
+  process.stdout.write(fallbackLine(payload));
+  process.exit(0);
+}
+
 record(payload);
 const snap = advice ? advice.toSnapshot(payload) : null;
 writeSnapshot(snap);
 
 // The previous command can break (e.g. a plugin update moves its versioned
-// path): if it fails or prints nothing, show our own line instead of a blank one.
+// path): if it fails, hangs or prints nothing, show our own line instead of a blank one.
 const next = previousCommand();
 if (next) {
-  const child = spawn(next, { shell: true, stdio: ["pipe", "pipe", "ignore"] });
+  // Its own process group, so a timeout also stops what the shell started.
+  const posix = process.platform !== "win32";
+  const child = spawn(next, { shell: true, detached: posix, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, [NESTED]: "1" } });
   let out = "";
   let done = false;
   const finish = (ok) => {
@@ -215,6 +228,15 @@ if (next) {
     process.stdout.write(withVerdict(ok && out.trim() ? out : fallbackLine(payload), snap));
     process.exit(0);
   };
+  setTimeout(() => {
+    try {
+      if (posix) process.kill(-child.pid, "SIGKILL");
+      else child.kill();
+    } catch {
+      /* already gone */
+    }
+    finish(false);
+  }, PREVIOUS_TIMEOUT_MS);
   child.stdout.on("data", (c) => { out += c; });
   child.on("error", () => finish(false));
   child.on("close", (code) => finish(code === 0));

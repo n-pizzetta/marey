@@ -14,11 +14,11 @@
  * Codex and Copilot CLI, when installed, get their own native limit items instead
  * (host-limits.mjs); `--uninstall` reverts those too.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dataDir, legacyDataDir } from "./data-dir.mjs";
+import { dataDir } from "./data-dir.mjs";
 import { setHostLimits } from "./host-limits.mjs";
 
 // Honors CLAUDE_CONFIG_DIR, like Claude Code.
@@ -28,7 +28,7 @@ const SETTINGS = join(CLAUDE, "settings.json");
 const STATE = join(DIR, "statusline.json");
 const TARGET = join(DIR, "statusline.mjs");
 // Installs made before the rename point settings.json at the old folder (now a symlink).
-const LEGACY_TARGET = join(legacyDataDir(CLAUDE), "statusline.mjs");
+const OURS = /[\\/](marey|ccblackbox)[\\/]statusline\.mjs/;
 const ADVICE_TARGET = join(DIR, "context-advice.mjs");
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const SOURCE = join(SCRIPTS, "statusline.mjs");
@@ -50,12 +50,20 @@ function readSettings() {
   return settings;
 }
 
-/** Backup, then write through a temp file + rename so a concurrent reader never sees half a file. */
+/**
+ * Backup, then write through a temp file + rename so a concurrent reader never sees half a file. On
+ * the symlink's target if settings.json is a dotfiles link, and with its mode (it can hold API keys).
+ */
 function writeSettings(settings) {
-  if (existsSync(SETTINGS)) copyFileSync(SETTINGS, `${SETTINGS}.marey.bak`);
-  const tmp = `${SETTINGS}.marey.tmp`;
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + "\n");
-  renameSync(tmp, SETTINGS);
+  const exists = existsSync(SETTINGS);
+  const target = exists ? realpathSync(SETTINGS) : SETTINGS;
+  const mode = exists ? statSync(target).mode & 0o777 : 0o666;
+  if (exists) copyFileSync(target, `${SETTINGS}.marey.bak`);
+  const tmp = `${target}.marey.tmp`;
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + "\n", { mode });
+  // The umask may have masked bits off the mode it was created with.
+  if (exists) chmodSync(tmp, mode);
+  renameSync(tmp, target);
 }
 
 function removeState() {
@@ -74,8 +82,11 @@ function removeState() {
  */
 const REFRESH_INTERVAL = 30;
 
-const isOurs = (statusLine) =>
-  typeof statusLine?.command === "string" && (statusLine.command.includes(TARGET) || statusLine.command.includes(LEGACY_TARGET));
+/**
+ * The wrapper by its folder and name, not its full path: the same file reached another way (`~`, a
+ * symlinked config dir, settings synced from another home) saved as "previous" would run itself.
+ */
+const isOurs = (statusLine) => typeof statusLine?.command === "string" && OURS.test(statusLine.command);
 
 function install() {
   mkdirSync(DIR, { recursive: true });

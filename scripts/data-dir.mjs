@@ -25,8 +25,3 @@ export function dataDir(claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedi
   }
   return dir;
 }
-
-/** The pre-rename folder, for recognizing an older status line install. */
-export function legacyDataDir(claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")) {
-  return join(claudeDir, LEGACY_NAME);
-}
