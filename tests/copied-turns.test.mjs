@@ -13,6 +13,8 @@ const ORIGINAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const FORK = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const SNAPSHOT = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const ASIDE = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const LONG = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const LONG_FORK = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 
 const ts = (s) => new Date(Date.UTC(2026, 9, 1, 10, 0, 0) + s * 1000).toISOString();
 /** Lines as Claude Code writes them: `sessionId` and `session_id` both name the session. */
@@ -33,6 +35,8 @@ const asst = (s, msgId, ids, extra = {}) =>
       usage: { input_tokens: 10, output_tokens: 1 },
     },
   });
+const failed = (s, msgId, ids) =>
+  JSON.stringify({ type: "user", timestamp: ts(s), ...ids, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `tu_${msgId}`, is_error: true, content: "boom" }] } });
 const of = (id) => ({ sessionId: id, session_id: id });
 const write = (path, lines) => {
   mkdirSync(join(path, ".."), { recursive: true });
@@ -44,13 +48,13 @@ let sessionDetail;
 const byId = (id) => sessions.find((s) => s.id === id);
 
 before(async () => {
-  const original = [user(0, "start", of(ORIGINAL)), asst(1, "msg_o1", of(ORIGINAL)), user(2, "more", of(ORIGINAL)), asst(3, "msg_o2", of(ORIGINAL))];
+  const original = [user(0, "start", of(ORIGINAL)), asst(1, "msg_o1", of(ORIGINAL)), failed(1, "msg_o1", of(ORIGINAL)), user(2, "more", of(ORIGINAL)), asst(3, "msg_o2", of(ORIGINAL))];
   write(join(PROJECT, `${ORIGINAL}.jsonl`), [...original, user(900, "later", of(ORIGINAL)), asst(901, "msg_o3", of(ORIGINAL))]);
   // A background fork: the conversation so far under the fork's sessionId and the original's
   // session_id, then its own work.
   const copy = { sessionId: FORK, session_id: ORIGINAL, sessionKind: "bg" };
   write(join(PROJECT, `${FORK}.jsonl`), [
-    user(0, "start", copy), asst(1, "msg_o1", copy), user(2, "more", copy), asst(3, "msg_o2", copy),
+    user(0, "start", copy), asst(1, "msg_o1", copy), failed(1, "msg_o1", copy), user(2, "more", copy), asst(3, "msg_o2", copy),
     user(600, "go on", of(FORK)), asst(601, "msg_f1", of(FORK)),
   ]);
   // Another transcript holding the start of the original, under the original's ids, that stops first.
@@ -60,6 +64,14 @@ before(async () => {
   const side = { ...of(ASIDE), isSidechain: true, agentId: "aside_question-1" };
   write(join(PROJECT, ASIDE, "subagents", "agent-aside_question-1.jsonl"), [
     user(4, "a side question", side), asst(1, "msg_a1", side), asst(3, "msg_a2", side), asst(5, "msg_s1", side),
+  ]);
+  // A fork of a conversation past the calls kept per transcript.
+  const long = Array.from({ length: 300 }, (_, i) => asst(i, `msg_l${i}`, of(LONG)));
+  write(join(PROJECT, `${LONG}.jsonl`), [user(0, "start", of(LONG)), ...long]);
+  const longCopy = { sessionId: LONG_FORK, session_id: LONG, sessionKind: "bg" };
+  write(join(PROJECT, `${LONG_FORK}.jsonl`), [
+    user(0, "start", longCopy), ...Array.from({ length: 300 }, (_, i) => asst(i, `msg_l${i}`, longCopy)),
+    user(700, "go on", of(LONG_FORK)), asst(701, "msg_lf1", of(LONG_FORK)), asst(702, "msg_lf2", of(LONG_FORK)),
   ]);
   process.env.CLAUDE_CONFIG_DIR = CLAUDE;
   process.env.CODEX_HOME = join(root, ".codex");
@@ -80,6 +92,16 @@ test("a background fork counts only what it did after the fork", () => {
   assert.deepEqual(fork.toolCounts, { Bash: 1 });
 });
 
+test("a fork starts at its own first prompt, with its own active time, prompts and incidents", () => {
+  const fork = byId(FORK);
+  assert.equal(fork.startedAt, ts(600));
+  assert.equal(fork.durationMs, 1000);
+  assert.deepEqual(fork.prompts.map((p) => p.preview), ["go on"]);
+  assert.equal(fork.incidents.length, 0);
+  assert.equal(byId(ORIGINAL).startedAt, ts(0));
+  assert.equal(byId(ORIGINAL).incidents.length, 1);
+});
+
 test("a copy under the original's session id leaves the messages to the original", () => {
   assert.equal(byId(SNAPSHOT).turns.length, 0);
   assert.equal(byId(SNAPSHOT).costUsd, 0);
@@ -93,7 +115,19 @@ test("a sub-agent's copy of its session's conversation is not counted again", ()
   assert.deepEqual(s.toolCounts, { Bash: 3 });
 });
 
-test("the opened session drops the same copies", async () => {
-  const detail = await sessionDetail(byId(FORK));
-  assert.equal(detail.turns.length, 1);
+const countCalls = (seq) => seq.reduce((n, e) => n + (e.orphan ? 0 : 1) + (e.children?.length ?? 0), 0);
+
+test("the opened session lists the calls the counts hold, no copies", async () => {
+  const fork = await sessionDetail(byId(FORK));
+  assert.equal(fork.turns.length, 1);
+  assert.equal(countCalls(fork.toolSequence), 1);
+  assert.deepEqual(fork.timeline.map((e) => e.kind), ["prompt", "tool"]);
+  const aside = await sessionDetail(byId(ASIDE));
+  assert.equal(countCalls(aside.toolSequence), 3);
+});
+
+test("a fork's copy doesn't take the place of its own calls in the ones kept", async () => {
+  const fork = await sessionDetail(byId(LONG_FORK));
+  assert.equal(countCalls(fork.toolSequence), 2);
+  assert.equal(countCalls((await sessionDetail(byId(LONG))).toolSequence), 300);
 });
