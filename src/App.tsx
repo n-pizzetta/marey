@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { BrandMark } from "./components/BrandMark";
 import { type FilterId } from "./components/SessionFilters";
 import { AppHeader, type ReportStatus } from "./components/AppHeader";
@@ -317,6 +317,8 @@ function App() {
     if (target < 0 || target >= filtered.length) return;
     setSelectedId(filtered[target].id);
   };
+  // The key handler reads the latest list: a poll can reorder it while the open session keeps its index.
+  const onNavigate = useEffectEvent(navigate);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -328,7 +330,7 @@ function App() {
         // only hijack arrows while a session is open, so pages can still scroll
         if (!selectedId || helpOpen) return;
         e.preventDefault();
-        navigate(e.key === "ArrowDown" || e.key === "j" ? "next" : "prev");
+        onNavigate(e.key === "ArrowDown" || e.key === "j" ? "next" : "prev");
       }
       else if (e.key === "Escape") {
         if (helpOpen) return;
@@ -345,8 +347,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, filtered.length, selectedId, helpOpen]);
+  }, [selectedId, helpOpen]);
 
   if (source === "loading") {
     return (
