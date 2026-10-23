@@ -53,7 +53,7 @@ export function UsagePage({ sessions, allSessions, everySession, windowProviders
           <ModelMix sessions={sessions} />
           <ToolsHeatmap sessions={sessions} />
         </div>
-        <HeavyPrompts sessions={sessions} onSelectSession={onSelectSession} />
+        <HeavyPrompts sessions={sessions} range={range} onSelectSession={onSelectSession} />
       </PageSection>
     </div>
   );
