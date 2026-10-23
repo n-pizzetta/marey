@@ -389,11 +389,19 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude", l
     if (hit.parser && Date.now() - st.mtimeMs > HOT_MS) hit.parser = null;
     return hit.data;
   }
-  if (cached && light && agent === "claude") return readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
-  const parsed =
-    agent === "codex" ? await parseCodexRollout(path)
-    : agent === "copilot" ? await parseCopilotEvents(path)
-    : await parseTranscriptFile(path, sidechain);
+  let parsed;
+  try {
+    if (cached && light && agent === "claude") return await readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
+    parsed =
+      agent === "codex" ? await parseCodexRollout(path)
+      : agent === "copilot" ? await parseCopilotEvents(path)
+      : await parseTranscriptFile(path, sidechain);
+  } catch (err) {
+    // Deleted between the stat and the read, or unreadable: no transcript, like a failed stat.
+    transcriptCache.delete(path);
+    warnOnce(path, `[marey] could not read ${path}: ${err.message}`);
+    return null;
+  }
   if (!cached) return parsed;
   const data = light ? lightTranscript(parsed) : parsed;
   transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, light, data });
@@ -529,6 +537,8 @@ function createTranscriptParser(sidechain) {
   const quality = sidechain ? null : createQualityTracker();
 
   function line(j) {
+    // Valid JSON that is not a record (`null`, a number) is skipped like an unreadable line.
+    if (!j || typeof j !== "object") return;
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
@@ -584,6 +594,7 @@ function createTranscriptParser(sidechain) {
       }
       const content = Array.isArray(msg.content) ? msg.content : [];
       for (const c of content) {
+        if (!c || typeof c !== "object") continue;
         if (c.type === "text" && typeof c.text === "string") {
           turn.outBytes += c.text.length;
           if (!turn.outPreview) turn.outPreview = clip(c.text, 240);
@@ -627,7 +638,7 @@ function createTranscriptParser(sidechain) {
           toolSequence.push(entry);
         }
       }
-      if (content.some((c) => c.type === "tool_use")) ended = false;
+      if (content.some((c) => c?.type === "tool_use")) ended = false;
       else if (msg.stop_reason === "end_turn") ended = true;
     } else if (msg.role === "user") {
       if (j.isCompactSummary) quality?.onCompaction();
@@ -1388,7 +1399,7 @@ export async function parseAllSessions({ light = false } = {}) {
   const errorList = [];
   for (const file of (await readDirSafe(META_DIR)).filter((f) => f.endsWith(".json"))) {
     const meta = await readJsonSafe(join(META_DIR, file));
-    if (!meta || !meta.session_id || !meta.start_time) { errorList.push(file); continue; }
+    if (!meta || !meta.session_id || !Number.isFinite(Date.parse(meta.start_time))) { errorList.push(file); continue; }
     const facet = facetsSet.has(file) ? await readJsonSafe(join(FACETS_DIR, file)) : null;
     metaById.set(meta.session_id, { meta, facet });
   }
@@ -1403,7 +1414,7 @@ export async function parseAllSessions({ light = false } = {}) {
       live: liveById.get(id),
       dead: deadIds.has(id),
     };
-    const s = await buildSession(id, { ...input, history, now, read });
+    const s = await buildSessionSafe(id, { ...input, history, now, read });
     if (!s) continue;
     all.push(s);
     inputs.set(id, input);
@@ -1428,7 +1439,7 @@ export async function parseAllSessions({ light = false } = {}) {
     const entry = codexIndex.get(id);
     const live = (await isCodexLive(entry.path, t, codexRunning, now)) ? { isLive: true, cwd: t.cwd } : undefined;
     const children = codexChildren.get(id) ?? [];
-    const s = await buildSession(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
+    const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
     if (!s) continue;
     all.push(s);
     inputs.set(id, { entry, live, dead: false, codexChildEntries: children.map((c) => codexIndex.get(c)) });
@@ -1447,7 +1458,7 @@ export async function parseAllSessions({ light = false } = {}) {
       copilotParsed.push(t);
       const isLive = entry.pids.some((pid) => pids.has(pid));
       const live = isLive ? { isLive: true, cwd: entry.cwd ?? t.cwd, liveState: copilotLiveState(t, open.get(id), now) } : undefined;
-      const s = await buildSession(id, { entry, live, dead: false, history, now, read });
+      const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read });
       if (!s) continue;
       all.push(s);
       inputs.set(id, { entry, live, dead: false });
@@ -1464,6 +1475,24 @@ export async function parseAllSessions({ light = false } = {}) {
   buildInputs = inputs;
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
+}
+
+const warned = new Set();
+/** Each problem is logged once per server run, not on every parse. */
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(message);
+}
+
+/** A session that fails to build (a record the parser doesn't expect) is left out, not the whole parse. */
+async function buildSessionSafe(id, opts) {
+  try {
+    return await buildSession(id, opts);
+  } catch (err) {
+    warnOnce(id, `[marey] skipped session ${id}: ${err.message}`);
+    return null;
+  }
 }
 
 /** What the last parse built each session from, for `sessionDetail`. */
