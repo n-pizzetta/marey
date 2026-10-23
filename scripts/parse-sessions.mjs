@@ -59,6 +59,8 @@ const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 /** Calls that wait on the user: their duration is how long the session sat on a question or a plan. */
 const WAIT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 const MAX_INCIDENTS = 500;
+/** Calls kept per transcript, with their input and result, for the session view. */
+const MAX_CALLS = 300;
 
 /** The question asked, or the plan's title. */
 function askText(tool, input) {
@@ -341,7 +343,7 @@ function lightTranscript(t) {
     ...rest,
     lastReplyText: lastReply(t.turns),
     firstUserText: t.firstUserText?.slice(0, 220) ?? t.firstUserText,
-    prompts: t.prompts.map(({ tsMs, preview }) => ({ tsMs, preview })),
+    prompts: t.prompts.map(({ tsMs, activeAt, preview }) => ({ tsMs, activeAt, preview })),
     turns: t.turns.map(({ inPreview: _in, outPreview: _out, ...tu }) => tu),
   });
 }
@@ -471,6 +473,8 @@ function createTranscriptParser(path, sidechain) {
   // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
   let promptsCutAt = null;
   const toolSequence = [];
+  // Calls kept, up to MAX_CALLS each: on lines naming another session (a fork's copy) and on the others.
+  const callsKept = { copied: 0, own: 0 };
   const turns = [];
   const turnById = new Map();
   const seenToolUse = new Set();
@@ -478,9 +482,11 @@ function createTranscriptParser(path, sidechain) {
   const resultById = new Map();
   // Agent / Task calls: the sub-agent id Claude Code writes in the call's result (`toolUseResult.agentId`).
   const agentIdByToolUse = new Map();
-  // Every call (toolSequence stops at 300) and what went wrong with it, for scripts/recommendations.mjs.
+  // Every call (toolSequence stops at MAX_CALLS) and what went wrong with it, for scripts/recommendations.mjs.
   const callById = new Map();
   const incidents = [];
+  // The message of each incident's call, by index: a copied call's incidents go with it (`buildSession`).
+  const incidentMsgIds = [];
   // The last call and whether it was answered: an open question, plan or permission means the session waits on the user.
   let lastCallId = null;
   const answered = new Set();
@@ -508,8 +514,10 @@ function createTranscriptParser(path, sidechain) {
   let version = null;
   // Sub-agent transcripts are scored as part of nothing: quality is about the main context.
   const quality = sidechain ? null : createQualityTracker();
-  // A line written in another session (`copiedTurns`): a background fork's copies keep the original's
-  // session_id, other copies the original's sessionId. A sub-agent's lines carry its session's id.
+  // A line that names another session than its transcript's: a background fork's copies keep the
+  // original's session_id, an older copy its sessionId. A resumed session's own lines also keep the
+  // session_id it continues, so this only breaks ties (`copiedTurns`). A sub-agent's lines carry
+  // its session's id.
   const ownId = sidechain ? null : basename(path, ".jsonl");
   const copied = (j) =>
     (typeof j.session_id === "string" && j.session_id !== j.sessionId) || (!!ownId && typeof j.sessionId === "string" && j.sessionId !== ownId);
@@ -553,8 +561,10 @@ function createTranscriptParser(path, sidechain) {
           inPreview: clip(pendingInPreview, 240),
           outPreview: "",
           ...(sidechain ? { sidechain: true } : {}),
-          ...(msgId ? { msgId } : {}),
-          ...(copied(j) ? { copy: true } : {}),
+          msgId,
+          copy: copied(j),
+          // Active time so far: a fork's own time is what comes after its copy (`buildSession`).
+          activeAt: activeMs,
         };
         turnById.set(key, turn);
         turns.push(turn);
@@ -586,7 +596,7 @@ function createTranscriptParser(path, sidechain) {
         }
         const name = toolKey(c.name);
         const input = c.input ?? {};
-        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
+        if (c.id) callById.set(c.id, { tool: c.name, tsMs, msgId, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
         if (c.id) lastCallId = c.id;
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
@@ -605,7 +615,9 @@ function createTranscriptParser(path, sidechain) {
           const hash = createHash("sha256").update(input.file_path).digest("hex").slice(0, 16);
           if (!pathByHash.has(hash)) pathByHash.set(hash, input.file_path);
         }
-        if (toolSequence.length < 300) {
+        const budget = copied(j) ? "copied" : "own";
+        if (callsKept[budget] < MAX_CALLS) {
+          callsKept[budget]++;
           let preview = "";
           let full = "";
           if (typeof input.file_path === "string") preview = input.file_path;
@@ -613,7 +625,7 @@ function createTranscriptParser(path, sidechain) {
           else if (typeof input.pattern === "string") preview = input.pattern;
           else if (typeof input.prompt === "string") { preview = input.prompt; full = input.prompt; }
           else preview = Object.keys(input).join(", ");
-          const entry = { tsMs, tool: c.name, preview: clip(preview, 160), id: c.id };
+          const entry = { tsMs, tool: c.name, preview: clip(preview, 160), id: c.id, msgId };
           if (full && full.length > 160) entry.full = clip(full, 8000);
           toolSequence.push(entry);
         }
@@ -645,7 +657,10 @@ function createTranscriptParser(path, sidechain) {
             resultCount++;
             answered.add(tr.tool_use_id);
             const incident = incidentOf(j, tr, body, callById.get(tr.tool_use_id), tsMs);
-            if (incident && incidents.length < MAX_INCIDENTS) incidents.push(incident);
+            if (incident && incidents.length < MAX_INCIDENTS) {
+              incidents.push(incident);
+              incidentMsgIds.push(callById.get(tr.tool_use_id)?.msgId ?? null);
+            }
             if (!body) continue;
             quality?.onToolResult(tr.tool_use_id, body.length);
             resultById.set(tr.tool_use_id, {
@@ -681,7 +696,7 @@ function createTranscriptParser(path, sidechain) {
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
       if (text) {
-        if (prompts.length < 100) prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+        if (prompts.length < 100) prompts.push({ tsMs, activeAt: activeMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
         else promptsCutAt ??= tsMs;
       }
     }
@@ -729,6 +744,7 @@ function createTranscriptParser(path, sidechain) {
       customTitle,
       version,
       incidents,
+      incidentMsgIds,
       toolResults: resultCount,
       pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
       lastCall: lastCallId ? callById.get(lastCallId) : null,
@@ -961,10 +977,9 @@ async function readSubagents(entry, sessionId, read) {
  * a copy (`copy`), else to the one that started first (then ended first). Session id → the message
  * ids its transcript holds that another one owns.
  */
-async function copiedTurns(index, read) {
+function copiedTurns(read) {
   const transcripts = [];
-  for (const [id, entry] of index) {
-    const t = await readTranscriptFile(entry.path, read);
+  for (const [id, t] of read) {
     if (t?.turns.length) transcripts.push({ id, turns: t.turns, firstTs: t.firstTs ?? 0, lastTs: t.lastTs ?? 0 });
   }
   transcripts.sort((a, b) => a.firstTs - b.firstTs || a.lastTs - b.lastTs || (a.id < b.id ? -1 : 1));
@@ -1071,35 +1086,56 @@ function agentContextOf(agent, t, subs) {
  * `read` says how transcripts are read (`readTranscriptFile`): with `light`, the session leaves out
  * the detail view's fields (`DETAIL_FIELDS`, `sessionDetail` fills them).
  */
-async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], copies = null, read = {} }) {
+async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], copies = null, transcript, read = {} }) {
   const agent = entry?.agent ?? "claude";
   const light = !!read.light;
-  const t = entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
+  // `transcript`: already read by this parse.
+  const t = transcript !== undefined ? transcript : entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
   if (!t && !meta && !live) return null;
   if (t && !t.firstTs && !meta && !live) return null;
   const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id, read) : [];
 
-  const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
-  const startedAtMs = t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
-  const isLive = !!live?.isLive;
-  const lastTs = Math.max(t?.lastTs ?? 0, ...subs.map((sub) => sub.lastTs ?? 0)) || null;
-
   // Each message counts once: not the ones another transcript owns (`copies`), nor the ones a
   // sub-agent copied from the conversation it started from (an aside question, a compaction).
+  // Their calls and incidents go with them.
   const seen = new Set(copies);
   const dropped = [];
-  const owned = (tu) => {
-    if (!tu.msgId) return true;
-    if (seen.has(tu.msgId)) {
-      dropped.push(tu);
-      return false;
-    }
-    seen.add(tu.msgId);
-    return true;
+  /** A transcript's turns without the copies, and the ids of the copies it dropped. */
+  const split = (src) => {
+    const copied = new Set();
+    const kept = (src?.turns ?? []).filter((tu) => {
+      if (!tu.msgId) return true;
+      if (seen.has(tu.msgId)) {
+        copied.add(tu.msgId);
+        dropped.push(tu);
+        return false;
+      }
+      seen.add(tu.msgId);
+      return true;
+    });
+    return { kept, copied };
   };
-  const mainTurns = (t?.turns ?? []).filter(owned);
-  const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns.filter(owned))].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
-  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs, t?.promptsCutAt ?? null);
+  // Alone, a transcript has nothing to drop.
+  const parts = copies || subs.length ? [t, ...subs].map(split) : [{ kept: t?.turns ?? [], copied: seen }];
+  const mainTurns = parts[0].kept;
+  const allTurns = parts.flatMap((p) => p.kept).sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
+  /** The calls of transcript `i` that go with a turn it kept, and its incidents (their ids by index). */
+  const ownOf = (i, list, ids = null) =>
+    parts[i].copied.size ? (list ?? []).filter((x, k) => !parts[i].copied.has(ids ? ids[k] : x.msgId)) : list ?? [];
+
+  // A transcript that starts with another's conversation (a fork) starts where its own work does:
+  // its prompts, active time and timeline begin after the last turn it copied.
+  const copiedUntil = copies ? (t?.turns ?? []).reduce((max, tu) => (copies.has(tu.msgId) ? Math.max(max, tu.tsMs ?? 0) : max), 0) || null : null;
+  const pastCopy = (x) => !copiedUntil || (x.tsMs ?? 0) > copiedUntil;
+  const prompts = (t?.prompts ?? []).filter(pastCopy);
+  const firstOwnTurn = copiedUntil ? mainTurns.find(pastCopy) : null;
+  const ownSince = copiedUntil ? prompts[0] ?? firstOwnTurn : null;
+
+  const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
+  const startedAtMs = ownSince?.tsMs ?? t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
+  const isLive = !!live?.isLive;
+  const lastTs = Math.max(t?.lastTs ?? 0, ...subs.map((sub) => sub.lastTs ?? 0)) || null;
+  const turns = relativizeTurns(allTurns, prompts, startedAtMs, t?.promptsCutAt ?? null);
 
   const toolCounts = {};
   for (const src of [t, ...subs]) {
@@ -1138,9 +1174,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     cwd: t?.cwd ?? meta?.project_path ?? entry?.cwd ?? live?.cwd ?? "",
     startedAt: new Date(startedAtMs).toISOString(),
     // Active time: gaps over IDLE_CAP_MS between transcript events are idle.
-    durationMs: t ? Math.max(1, t.activeMs) : Math.max(1, (meta?.duration_minutes ?? 0) * 60_000),
+    durationMs: t ? Math.max(1, t.activeMs - (ownSince?.activeAt ?? (copiedUntil ? t.activeMs : 0))) : Math.max(1, (meta?.duration_minutes ?? 0) * 60_000),
     wallMs: Math.max(1, (isLive ? now : lastTs ?? startedAtMs) - startedAtMs),
-    longestRunMs: t?.longestRunMs ?? 0,
+    longestRunMs: copiedUntil ? longestRun([...mainTurns.filter(pastCopy), ...prompts].map((x) => x.tsMs)) : t?.longestRunMs ?? 0,
     model,
     outcome,
     satisfaction: satisfactionOf(facet),
@@ -1156,7 +1192,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
       ? allTurns.reduce((sum, tu) => sum + baselineCostFor(tu.model ?? model, tu.tokens), 0)
       : baselineCostFor(model, tokens, 0),
     frictions: isLive ? [] : mapFrictions(facet),
-    timeline: light ? [] : t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
+    timeline: light ? [] : t ? relativizeEvents(t.absEvents.filter(pastCopy), startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
     filesChanged: fileHistory.length || t?.filesChanged || meta?.files_modified || 0,
     commits: t ? t.commits : meta?.git_commits ?? 0,
@@ -1167,7 +1203,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     ...(!t ? { transcriptMissing: true } : {}),
     quality: t?.quality ?? null,
     // Absolute times, sub-agents included: read by scripts/recommendations.mjs, left out of the list payload.
-    incidents: [t, ...subs].flatMap((src) => src?.incidents ?? []).sort((a, b) => (a.t ?? 0) - (b.t ?? 0)),
+    incidents: [t, ...subs]
+      .flatMap((src, i) => ownOf(i, src?.incidents, src?.incidentMsgIds))
+      .sort((a, b) => (a.t ?? 0) - (b.t ?? 0)),
     incidentStats: { toolResults: [t, ...subs].reduce((n, src) => n + (src?.toolResults ?? 0), 0) },
     ...(t?.version ? { version: t.version } : {}),
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
@@ -1175,19 +1213,19 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     fileHistory: light ? [] : fileHistory,
     // Detail payload only, read by /api/agent-context.
     agentContext: agentContextOf(agent, t, subs),
-    prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
+    prompts: relativizePrompts(prompts, startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
     toolSequence: light ? [] : nestSubagentCalls(
       // The hook's calls only stand in for a missing transcript: next to one they are all duplicates
       // (a sub-agent's calls among them), which no timestamp match can tell apart.
-      t ? relativizeToolSequence(t.toolSequence ?? [], startedAtMs) : pluginCache.entries,
-      subs.map((sub) => ({
+      t ? relativizeToolSequence(ownOf(0, t.toolSequence).slice(0, MAX_CALLS), startedAtMs) : pluginCache.entries,
+      subs.map((sub, i) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
         description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
-        calls: relativizeToolSequence(sub.toolSequence ?? [], startedAtMs),
+        calls: relativizeToolSequence(ownOf(i + 1, sub.toolSequence).slice(0, MAX_CALLS), startedAtMs),
       })),
     ),
     turns,
@@ -1470,7 +1508,10 @@ export async function parseAllSessions({ light = false } = {}) {
 
   const now = Date.now();
   const all = [];
-  const copies = await copiedTurns(index, read);
+  // Every Claude Code transcript before any session: `copiedTurns` compares them all.
+  const transcripts = new Map();
+  for (const [id, entry] of index) transcripts.set(id, await readTranscriptFile(entry.path, read));
+  const copies = copiedTurns(transcripts);
   for (const id of new Set([...index.keys(), ...metaById.keys(), ...liveById.keys()])) {
     const input = {
       entry: index.get(id),
@@ -1480,7 +1521,7 @@ export async function parseAllSessions({ light = false } = {}) {
       dead: deadIds.has(id),
       copies: copies.get(id),
     };
-    const s = await buildSessionSafe(id, { ...input, history, now, read });
+    const s = await buildSessionSafe(id, { ...input, history, now, read, transcript: transcripts.get(id) });
     if (!s) continue;
     all.push(s);
     inputs.set(id, input);

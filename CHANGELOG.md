@@ -31,7 +31,7 @@ versioning follows [SemVer](https://semver.org/).
 - On Windows, "Reveal transcript" said it could not open the file even when Explorer had opened it.
 - Deleting a ghost session could remove for good one resumed since the last refresh. It is now checked again first, and kept if its Claude Code runs or it was written in the last 10 minutes; a bulk delete skips those and says why. Deleted ghosts go to `~/.claude/marey/trash/` for 30 days.
 - A Claude Code session running as another user (under `sudo`) could be shown as crashed.
-- Messages copied into another transcript counted twice: a background fork's copy of its session, and the conversation an aside question or a compaction sub-agent starts from (about 3% of tokens on a real `~/.claude`). Each message now counts once, in the transcript it was written in.
+- Messages copied into another transcript counted twice: a background fork's copy of its session, and the conversation an aside question or a compaction sub-agent starts from (about 3% of tokens on a real `~/.claude`). Each message now counts once, in the transcript it was written in, with its tool calls and their failures. A fork starts when it was forked: its active time, prompts and timeline no longer repeat the session it came from.
 
 ### Planned
 
