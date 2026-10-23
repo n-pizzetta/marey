@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Session } from "../types";
-import { costOf } from "../../scripts/models.mjs";
+import { sessionCostPerKind } from "../utils/costPerKind";
 import { formatClockAt, formatCost, formatDuration, formatTokens } from "../utils/format";
 import { formatCredits } from "../utils/planFormat";
 import { buildSessionTimeline } from "../utils/sessionTimeline";
@@ -83,15 +83,9 @@ const KINDS: Array<{ key: "output" | "cacheWrite" | "cacheRead" | "input"; cls: 
   { key: "input", cls: "input", label: "input" },
 ];
 
-/** Where the API value went, by token kind (priced with the session's model). */
+/** Where the API value went, by token kind (priced turn by turn, like the Tokens tab). */
 function kindShares(session: Session): Array<{ cls: string; label: string; pct: number }> {
-  const t = session.tokens;
-  const cost = {
-    output: costOf(session.model, { output: t.output }),
-    cacheWrite: costOf(session.model, { cacheWrite: t.cacheWrite, cacheWrite1h: t.cacheWrite1h }),
-    cacheRead: costOf(session.model, { cacheRead: t.cacheRead }),
-    input: costOf(session.model, { input: t.input }),
-  };
+  const cost = sessionCostPerKind(session);
   const total = Object.values(cost).reduce((a, n) => a + n, 0);
   if (total <= 0) return [];
   return KINDS.map((k) => ({ cls: k.cls, label: k.label, pct: (cost[k.key] / total) * 100 }));

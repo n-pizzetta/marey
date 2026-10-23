@@ -30,7 +30,7 @@ import {
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
 import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
 import { freshest } from "./provider-limits.mjs";
-import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModelOverrides } from "./models.mjs";
+import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
@@ -134,10 +134,9 @@ export function liveStateOf({ live, pending, lastCall = null, lastText, lastTs, 
   return { state: "your-turn", text: lastText, since: iso(live?.statusAt ?? lastTs) };
 }
 
-const costFor = costOf;
-/** Priced per turn when available, so sessions that switch models cost right. */
+/** Priced per turn when available, so sessions that switch models cost right; totals alone at the base tier. */
 const sessionCost = (model, tokens, turns) =>
-  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costFor(model, tokens);
+  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costOf(model, tokens, 0);
 
 /** Model that produced the most output tokens (sessions can switch models). */
 const dominantModel = (turns, fallback) => {
@@ -149,10 +148,11 @@ const dominantModel = (turns, fallback) => {
   return best;
 };
 
-const baselineCostFor = (model, tokens) => {
-  const p = priceFor(model);
+/** What the tokens would cost with no prompt cache: every input token at the full input rate. */
+const baselineCostFor = (model, tokens, prompt) => {
   const t = tokens || {};
-  const allInput = (t.input ?? 0) + (t.cacheRead ?? 0) + (t.cacheWrite ?? 0);
+  const allInput = promptTokens(t);
+  const p = priceFor(model, prompt ?? allInput);
   return (allInput / 1e6) * p.in + ((t.output ?? 0) / 1e6) * p.out;
 };
 
@@ -1077,8 +1077,11 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     messages: t ? t.assistantMessages + t.userMessages : (meta?.user_message_count ?? 0) + (meta?.assistant_message_count ?? 0),
     toolCounts,
     tokens,
-    costUsd: allTurns.length ? sessionCost(model, tokens, allTurns) : costOf(model, tokens),
-    baselineCostUsd: baselineCostFor(model, tokens),
+    costUsd: sessionCost(model, tokens, allTurns),
+    // Per turn too, so sub-agents on another model are compared at their own rates.
+    baselineCostUsd: allTurns.length
+      ? allTurns.reduce((sum, tu) => sum + baselineCostFor(tu.model ?? model, tu.tokens), 0)
+      : baselineCostFor(model, tokens, 0),
     frictions: isLive ? [] : mapFrictions(facet),
     timeline: light ? [] : t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),

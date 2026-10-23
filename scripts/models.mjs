@@ -138,13 +138,13 @@ export function modelFamily(model) {
 
 /**
  * Cost in USD of one request's usage (a turn): a model with a `longPrompt` tier is priced from that
- * request's prompt size, so a sum of several requests must be priced turn by turn. Uses the 5m / 1h
- * cache-write split when the token bundle has it (`cacheWrite5m`, `cacheWrite1h`); any remainder is
- * billed at the 5m rate.
+ * request's prompt size, so a sum of several requests must be priced turn by turn, or with `prompt`
+ * 0 (the base tier) when there are no turns. Uses the 5m / 1h cache-write split when the token
+ * bundle has it (`cacheWrite5m`, `cacheWrite1h`); any remainder is billed at the 5m rate.
  */
-export function costOf(model, t) {
+export function costOf(model, t, prompt = promptTokens(t)) {
   if (!t) return 0;
-  const p = priceFor(model, promptTokens(t));
+  const p = priceFor(model, prompt);
   const cw = t.cacheWrite ?? 0;
   const cw1h = Math.min(cw, t.cacheWrite1h ?? 0);
   return (

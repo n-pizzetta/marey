@@ -59,7 +59,9 @@ export function activeSessions(sessions: Session[], freshWindowMs = 5 * 60_000, 
   });
 }
 
-export type TimeBucket = { fromMs: number; toMs: number; byProject: Map<string, TokenBundle> };
+/** A project's tokens in a bucket, and their API value priced turn by turn with each turn's model. */
+export type BucketCell = TokenBundle & { cost: number };
+export type TimeBucket = { fromMs: number; toMs: number; byProject: Map<string, BucketCell> };
 
 export function bucketSizeMs(range: Range): number {
   switch (range) {
@@ -86,11 +88,12 @@ export function bucketizeByProject(sessions: Session[], range: Range, fromMs: nu
       const idx = Math.floor((ts - fromMs) / step);
       if (idx < 0 || idx >= buckets.length) continue;
       const proj = s.project || "unknown";
-      const cur = buckets[idx].byProject.get(proj) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const cur = buckets[idx].byProject.get(proj) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
       cur.input += t.tokens.input;
       cur.output += t.tokens.output;
       cur.cacheRead += t.tokens.cacheRead;
       cur.cacheWrite += t.tokens.cacheWrite;
+      cur.cost += costOfTokens(t.model ?? s.model, t.tokens);
       buckets[idx].byProject.set(proj, cur);
     }
   }

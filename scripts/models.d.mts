@@ -18,4 +18,4 @@ export function promptTokens(t: CostTokens | null | undefined): number;
 export function priceFor(model: string, prompt?: number): ModelPrice;
 export function modelLabel(model: string | null | undefined): string;
 export function modelFamily(model: string | null | undefined): string;
-export function costOf(model: string, t: CostTokens | null | undefined): number;
+export function costOf(model: string, t: CostTokens | null | undefined, prompt?: number): number;

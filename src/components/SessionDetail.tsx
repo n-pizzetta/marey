@@ -15,7 +15,8 @@ import { estimateHint, formatBytes, formatClockAt, formatCost, formatDuration, f
 import { SESSION_IDLE_GAP_MS } from "../utils/fleetStats";
 import { downloadSessionHtml } from "../utils/exportSession";
 import { classifyPrompt, PROMPT_KIND_COLOR, PROMPT_KIND_LABEL } from "../utils/classifyPrompt";
-import { costOf, modelLabel, priceFor, type CostTokens, type ModelPrice } from "../../scripts/models.mjs";
+import { costOf, modelLabel, priceFor, type CostTokens } from "../../scripts/models.mjs";
+import { addKindCost, costPerKind, sessionCostPerKind, ZERO_KIND_COST, type KindCost } from "../utils/costPerKind";
 import { toastError } from "../utils/toast";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { keepFocus } from "../utils/keepFocus";
@@ -1026,36 +1027,6 @@ function ToolSeqRow({
   );
 }
 
-/** Cache writes at the 5-minute rate, except the 1-hour share (2x input) when known. */
-function cacheWriteCost(p: ModelPrice, t: { cacheWrite: number; cacheWrite1h?: number }) {
-  const oneHour = Math.min(t.cacheWrite, t.cacheWrite1h ?? 0);
-  return ((t.cacheWrite - oneHour) * p.cacheWrite + oneHour * p.cacheWrite1h) / 1e6;
-}
-
-function costPerKind(model: string, tokens: Session["tokens"]) {
-  const p = priceFor(model);
-  return {
-    input: (tokens.input / 1e6) * p.in,
-    output: (tokens.output / 1e6) * p.out,
-    cacheRead: (tokens.cacheRead / 1e6) * p.cacheRead,
-    cacheWrite: cacheWriteCost(p, tokens),
-  };
-}
-
-/** Per-kind cost priced turn by turn with each turn's model, so it adds up to costUsd. */
-function sessionCostPerKind(session: Session) {
-  if (!session.turns?.length) return costPerKind(session.model, session.tokens);
-  const out = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  for (const t of session.turns) {
-    const c = costPerKind(t.model ?? session.model, t.tokens);
-    out.input += c.input;
-    out.output += c.output;
-    out.cacheRead += c.cacheRead;
-    out.cacheWrite += c.cacheWrite;
-  }
-  return out;
-}
-
 const ratio = (n: number) => `${Number(n.toFixed(3))}×`;
 
 /** Token-kind explanations with this model's actual price ratios (scripts/models.mjs). */
@@ -1385,6 +1356,8 @@ type PromptStats = {
   turnCount: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite5m: number; cacheWrite1h: number };
   cost: number;
+  /** `cost` per token kind, priced turn by turn like it. */
+  kindCost: KindCost;
   tools: string[];
   dominantKind: "input" | "output" | "cacheRead" | "cacheWrite";
   gapBeforeMs: number;
@@ -1423,6 +1396,7 @@ function aggregateByPrompt(
     turnCount: 0,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
     cost: 0,
+    kindCost: ZERO_KIND_COST,
     tools: [],
     dominantKind: "input",
     gapBeforeMs: 0,
@@ -1442,6 +1416,7 @@ function aggregateByPrompt(
     s.tokens.cacheWrite5m += tn.tokens.cacheWrite5m ?? 0;
     s.tokens.cacheWrite1h += tn.tokens.cacheWrite1h ?? 0;
     s.cost += turnCost(tn.model ?? model, tn.tokens);
+    s.kindCost = addKindCost(s.kindCost, costPerKind(tn.model ?? model, tn.tokens));
     for (const t of tn.tools) s.tools.push(t);
     const prevT = prevTurnTByPrompt[tn.promptIdx] >= 0 ? prevTurnTByPrompt[tn.promptIdx] : s.t;
     s.turnDetails.push({
@@ -1464,13 +1439,7 @@ function aggregateByPrompt(
   }
   for (let i = 0; i < stats.length; i++) {
     const s = stats[i];
-    const p = priceFor(model);
-    const contrib = {
-      input: (s.tokens.input / 1e6) * p.in,
-      output: (s.tokens.output / 1e6) * p.out,
-      cacheRead: (s.tokens.cacheRead / 1e6) * p.cacheRead,
-      cacheWrite: cacheWriteCost(p, s.tokens),
-    } as const;
+    const contrib = s.kindCost;
     let max: PromptStats["dominantKind"] = "output";
     let maxV = -1;
     for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const) {
@@ -1513,12 +1482,13 @@ const KIND_LABEL: Record<PromptStats["dominantKind"], string> = {
 };
 
 function PromptCostBreakdown({ s, model }: { s: PromptStats; model: string }) {
+  // the costs come per turn (`kindCost`); the notes quote the session model's price ratios
   const pr = priceFor(model);
   const rows: Array<{ key: "input" | "output" | "cacheRead" | "cacheWrite"; label: string; cls: string; val: number; cost: number }> = [
-    { key: "input",      label: "input",  cls: "input",       val: s.tokens.input,      cost: (s.tokens.input / 1e6) * pr.in },
-    { key: "output",     label: "output", cls: "output",      val: s.tokens.output,     cost: (s.tokens.output / 1e6) * pr.out },
-    { key: "cacheRead",  label: "cache read", cls: "cache-read",  val: s.tokens.cacheRead,  cost: (s.tokens.cacheRead / 1e6) * pr.cacheRead },
-    { key: "cacheWrite", label: "cache write", cls: "cache-write", val: s.tokens.cacheWrite, cost: cacheWriteCost(pr, s.tokens) },
+    { key: "input",      label: "input",  cls: "input",       val: s.tokens.input,      cost: s.kindCost.input },
+    { key: "output",     label: "output", cls: "output",      val: s.tokens.output,     cost: s.kindCost.output },
+    { key: "cacheRead",  label: "cache read", cls: "cache-read",  val: s.tokens.cacheRead,  cost: s.kindCost.cacheRead },
+    { key: "cacheWrite", label: "cache write", cls: "cache-write", val: s.tokens.cacheWrite, cost: s.kindCost.cacheWrite },
   ];
   return (
     <div className="prompt-cost-panel-body">
