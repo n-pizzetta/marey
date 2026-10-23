@@ -292,35 +292,6 @@ async function readCaptureFile(file, startedAtMs) {
   return { entries, count: entries.length, lastTsMs, stopTsMs };
 }
 
-function mergeToolSequences(transcriptSeq, pluginSeq) {
-  if (pluginSeq.length === 0) return transcriptSeq;
-  if (transcriptSeq.length === 0) return pluginSeq;
-  const tagged = [
-    ...transcriptSeq.map((e) => ({ ...e, _src: e.source ?? "transcript" })),
-    ...pluginSeq.map((e) => ({ ...e, _src: "plugin" })),
-  ];
-  tagged.sort((a, b) => a.t - b.t);
-  const out = [];
-  for (const e of tagged) {
-    const prev = out[out.length - 1];
-    if (prev && prev.tool === e.tool && Math.abs(prev.t - e.t) < 500) {
-      // duplicate within 500ms — prefer transcript (richer fields)
-      if (prev._src === "transcript" && e._src === "plugin") continue;
-      if (prev._src === "plugin" && e._src === "transcript") {
-        out[out.length - 1] = e;
-        continue;
-      }
-    }
-    out.push(e);
-  }
-  return out.map((e) => {
-    // strip the internal tag, keep `source` only when it's "plugin"
-    const { _src, ...rest } = e;
-    if (_src === "plugin") rest.source = "plugin";
-    return rest;
-  });
-}
-
 /** Read history.jsonl line-by-line, group user messages by sessionId. */
 async function readHistoryBySession() {
   const bySession = new Map();
@@ -1116,7 +1087,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
     toolSequence: light ? [] : nestSubagentCalls(
-      mergeToolSequences(relativizeToolSequence(t?.toolSequence ?? [], startedAtMs), pluginCache.entries),
+      // The hook's calls only stand in for a missing transcript: next to one they are all duplicates
+      // (a sub-agent's calls among them), which no timestamp match can tell apart.
+      t ? relativizeToolSequence(t.toolSequence ?? [], startedAtMs) : pluginCache.entries,
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
