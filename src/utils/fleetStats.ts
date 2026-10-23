@@ -72,12 +72,35 @@ export function bucketSizeMs(range: Range): number {
   }
 }
 
+/** The local clock time a bucket of `step` starts at: the hour, a quarter, 00/06/12/18 h or midnight. */
+function bucketStart(ms: number, step: number): number {
+  const d = new Date(ms);
+  if (step >= 86_400_000) d.setHours(0, 0, 0, 0);
+  else if (step >= 3_600_000) d.setHours(d.getHours() - (d.getHours() % (step / 3_600_000)), 0, 0, 0);
+  else d.setMinutes(d.getMinutes() - (d.getMinutes() % (step / 60_000)), 0, 0);
+  return d.getTime();
+}
+
+/** The next bucket's start, on the local clock (a day around a DST change is 23 or 25 hours). */
+function nextBucket(ms: number, step: number): number {
+  const d = new Date(ms);
+  if (step >= 3_600_000) d.setHours(d.getHours() + step / 3_600_000);
+  else d.setMinutes(d.getMinutes() + step / 60_000);
+  return d.getTime();
+}
+
+/**
+ * Tokens per project in buckets on clock boundaries (a 7d bar is 14:00–15:00, not 14:37–15:37). The
+ * first bucket starts before `fromMs` but only holds what came after it.
+ */
 export function bucketizeByProject(sessions: Session[], range: Range, fromMs: number, toMs: number): TimeBucket[] {
   const step = bucketSizeMs(range);
   if (step <= 0 || toMs <= fromMs) return [];
   const buckets: TimeBucket[] = [];
-  for (let b = fromMs; b < toMs; b += step) {
-    buckets.push({ fromMs: b, toMs: b + step, byProject: new Map() });
+  for (let b = bucketStart(fromMs, step); b < toMs; ) {
+    const next = nextBucket(b, step);
+    buckets.push({ fromMs: b, toMs: next, byProject: new Map() });
+    b = next;
   }
   for (const s of sessions) {
     if (!s.turns || s.turns.length === 0) continue;
@@ -85,8 +108,15 @@ export function bucketizeByProject(sessions: Session[], range: Range, fromMs: nu
     for (const t of s.turns) {
       const ts = startMs + t.t;
       if (ts < fromMs || ts >= toMs) continue;
-      const idx = Math.floor((ts - fromMs) / step);
-      if (idx < 0 || idx >= buckets.length) continue;
+      // last bucket starting at or before ts
+      let lo = 0;
+      let hi = buckets.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (buckets[mid].fromMs <= ts) lo = mid;
+        else hi = mid - 1;
+      }
+      const idx = lo;
       const proj = s.project || "unknown";
       const cur = buckets[idx].byProject.get(proj) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
       cur.input += t.tokens.input;
