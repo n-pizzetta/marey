@@ -88,6 +88,14 @@ const REFRESH_INTERVAL = 30;
  */
 const isOurs = (statusLine) => typeof statusLine?.command === "string" && OURS.test(statusLine.command);
 
+function readState() {
+  try {
+    return JSON.parse(readFileSync(STATE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function install() {
   mkdirSync(DIR, { recursive: true });
   copyFileSync(SOURCE, TARGET);
@@ -103,6 +111,9 @@ function install() {
       writeSettings(settings);
       if (addRefresh) console.log(`[marey] status line now refreshes every ${REFRESH_INTERVAL}s, so the cache countdown keeps moving while idle.`);
     }
+    // An install caught in the loop saved the wrapper itself as "previous": forget it.
+    const state = readState();
+    if (isOurs(state?.previous)) writeFileSync(STATE, JSON.stringify({ ...state, previous: null }, null, 2) + "\n");
     console.log(`[marey] status line already installed; wrapper refreshed at ${TARGET}`);
     return;
   }
@@ -130,12 +141,9 @@ function uninstall() {
     console.log("[marey] status line not active; removed leftover Marey files.");
     return;
   }
-  let previous = null;
-  try {
-    previous = JSON.parse(readFileSync(STATE, "utf8")).previous ?? null;
-  } catch {
-    /* no saved state: just remove ours */
-  }
+  // No saved state, or our own wrapper saved by an install caught in the loop: just remove ours.
+  const saved = readState()?.previous ?? null;
+  const previous = isOurs(saved) ? null : saved;
   if (previous) settings.statusLine = previous;
   else delete settings.statusLine;
   writeSettings(settings);

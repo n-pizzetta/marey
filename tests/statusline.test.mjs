@@ -98,3 +98,24 @@ test("the installer writes through a symlinked settings.json and keeps its mode"
   assert.equal(statSync(real).mode & 0o777, 0o600);
   assert.equal(JSON.parse(readFileSync(join(claude, "settings.json.marey.bak"), "utf8")).env.SOME_KEY, "secret");
 });
+
+test("an install caught in the loop forgets the wrapper saved as its previous status line", () => {
+  const root = mkdtempSync(join(tmpdir(), "marey-install-"));
+  const claude = join(root, "claude");
+  mkdirSync(join(claude, "marey"), { recursive: true });
+  symlinkSync(claude, join(root, "link"));
+  const self = { type: "command", command: `node "${join(root, "link", "marey", "statusline.mjs")}"` };
+  writeFileSync(join(claude, "settings.json"), JSON.stringify({ statusLine: { ...self, command: `node "${join(claude, "marey", "statusline.mjs")}"` } }));
+  writeFileSync(join(claude, "marey", "statusline.json"), JSON.stringify({ previous: self, verdict: false }));
+
+  install(claude);
+  assert.deepEqual(JSON.parse(readFileSync(join(claude, "marey", "statusline.json"), "utf8")), { previous: null, verdict: false });
+
+  // An uninstall with the wrapper still saved restores nothing that points at it.
+  writeFileSync(join(claude, "marey", "statusline.json"), JSON.stringify({ previous: self }));
+  const empty = mkdtempSync(join(tmpdir(), "marey-bin-"));
+  execFileSync(process.execPath, ["scripts/install-statusline.mjs", "--uninstall"], {
+    env: { ...process.env, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: join(empty, "codex"), PATH: empty },
+  });
+  assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).statusLine, undefined);
+});
