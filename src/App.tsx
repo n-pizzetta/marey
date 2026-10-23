@@ -517,7 +517,8 @@ function App() {
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay
           spike={analysisSpike}
-          sessions={scopedFiltered.filter((s) => sessionProvider(s) === "claude")}
+          // the spike is in the plan's 5h %, which every Claude session counts toward: no scope here
+          sessions={claudeSessions}
           onClose={() => setAnalysisSpike(null)}
           onSelectSession={(id) => {
             setAnalysisSpike(null);
