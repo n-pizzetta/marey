@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Planned
+
+- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
+- Sub-Agent Tree component.
+- Cross-Session Patterns component.
+- Delta vs `~/.claude/usage-data/report.html` view.
+- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
+  `reassignLiveToChainTail`, plugin-cache merge.
+- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
+  macOS/Linux).
+- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
+  with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.13.1] — 2026-10-23
+
 ### Fixed
 
 - A session that had ended kept its context line in the list (`ctx 19% · cache cold · Clear if the task is done`) for up to 6 hours. The line, its cache countdown and its advice now only show while a session runs, for Claude Code, Codex and Copilot CLI alike; an ended session's view keeps only its last context, labelled as such.
@@ -32,19 +47,6 @@ versioning follows [SemVer](https://semver.org/).
 - Deleting a ghost session could remove for good one resumed since the last refresh. It is now checked again first, and kept if its Claude Code runs or it was written in the last 10 minutes; a bulk delete skips those and says why. Deleted ghosts go to `~/.claude/marey/trash/` for 30 days.
 - A Claude Code session running as another user (under `sudo`) could be shown as crashed.
 - Messages copied into another transcript counted twice: a background fork's copy of its session, and the conversation an aside question or a compaction sub-agent starts from (about 3% of tokens on a real `~/.claude`). Each message now counts once, in the transcript it was written in, with its tool calls and their failures. A fork starts when it was forked: its active time, prompts and timeline no longer repeat the session it came from.
-
-### Planned
-
-- Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
-- Sub-Agent Tree component.
-- Cross-Session Patterns component.
-- Delta vs `~/.claude/usage-data/report.html` view.
-- Tests: parser unit tests around `mapFrictions`, `linkClearedChains`,
-  `reassignLiveToChainTail`, plugin-cache merge.
-- CI: `.github/workflows/ci.yml` (lint + typecheck + build matrix
-  macOS/Linux).
-- Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
-  with mtime invalidation, so cold start doesn't re-parse the full set.
 
 ## [0.13.0] — 2026-10-22
 
