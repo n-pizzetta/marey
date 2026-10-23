@@ -1,5 +1,5 @@
-import type { KeyboardEvent } from "react";
-import type { LiveState, Session } from "../types";
+import { useState, type KeyboardEvent } from "react";
+import type { LiveState, LiveSubagents, Session } from "../types";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { useNow } from "../utils/useNow";
 import { runningSessions } from "../utils/liveState";
@@ -11,6 +11,8 @@ import "../plan.css";
 interface Props {
   sessions: Session[];
   onSelectSession: (id: string) => void;
+  /** A sub-agent at work: open its session on its calls. */
+  onSelectSubagent?: (sessionId: string, agentId: string) => void;
   /** Each running session's share of its plan. */
   usage?: Map<string, RowUsage>;
   /** Name the provider on each row (several providers on the board). */
@@ -52,8 +54,46 @@ function elapsed(since: string, now: number): string {
   return `${Math.floor(h / 24)} d`;
 }
 
+/** Sub-agents listed under a session before "+ n more". */
+const SHOWN_SUBAGENTS = 8;
+
+/** A session's sub-agents at work, under its row: name, task, last call and time since it started. Each opens onto its calls. */
+function SubagentList({ subs, now, onOpen }: { subs: LiveSubagents; now: number; onOpen: (agentId: string | null) => void }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? subs.running : subs.running.slice(0, SHOWN_SUBAGENTS);
+  const more = subs.running.length - shown.length;
+  return (
+    <div className="board-subs">
+      <div className="board-subs-head tabular">
+        {subs.running.length} sub-agent{subs.running.length > 1 ? "s" : ""} running{subs.done > 0 && ` · ${subs.done} done`}
+      </div>
+      <ul>
+        {shown.map((a, i) => (
+          <li
+            key={a.id ?? i}
+            className="board-sub"
+            role="button"
+            tabIndex={0}
+            title="Show its calls"
+            onClick={() => onOpen(a.id)}
+            onKeyDown={(e) => { if (e.key === "Enter") onOpen(a.id); }}
+          >
+            <span className="board-sub-name mono">{a.name}</span>
+            <span className="board-sub-task">
+              <span className="board-sub-desc" title={a.description ?? undefined}>{a.description}</span>
+              <span className="board-sub-call mono" title={a.call ?? undefined}>{a.call}</span>
+            </span>
+            <span className="board-sub-since mono tabular" title={`Started ${new Date(a.startedAt).toLocaleTimeString()}`}>{elapsed(a.startedAt, now)}</span>
+          </li>
+        ))}
+      </ul>
+      {more > 0 && <button className="board-subs-more" onClick={() => setAll(true)}>+ {more} more</button>}
+    </div>
+  );
+}
+
 /** Every running session, grouped by what it needs from you; the longest wait first. */
-export function SessionBoard({ sessions, onSelectSession, usage, showProvider = false, hovered = null, onHover }: Props) {
+export function SessionBoard({ sessions, onSelectSession, onSelectSubagent, usage, showProvider = false, hovered = null, onHover }: Props) {
   const now = useNow(15_000);
   const live = runningSessions(sessions);
   const open = (id: string) => (e: KeyboardEvent) => { if (e.key === "Enter") onSelectSession(id); };
@@ -107,6 +147,13 @@ export function SessionBoard({ sessions, onSelectSession, usage, showProvider = 
                         <button className="board-open" onClick={(e) => { e.stopPropagation(); openTerminal(s.id); }}>Open terminal</button>
                       ) : <span />}
                     </div>
+                    {!!s.liveSubagents?.running.length && (
+                      <SubagentList
+                        subs={s.liveSubagents}
+                        now={now}
+                        onOpen={(agentId) => (agentId && onSelectSubagent ? onSelectSubagent(s.id, agentId) : onSelectSession(s.id))}
+                      />
+                    )}
                   </li>
                 );
               })}

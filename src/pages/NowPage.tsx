@@ -17,6 +17,8 @@ interface Props {
   providers: Agent[];
   limits: RateLimits | null;
   onSelectSession: (id: string) => void;
+  /** A sub-agent at work on the board: open its session on its calls. */
+  onSelectSubagent: (sessionId: string, agentId: string) => void;
   onShowAllSessions: () => void;
   /** Opens the breakdown of a provider's current 5h window. */
   onOpenWindow: (provider: Agent) => void;
@@ -29,7 +31,7 @@ const LATEST = 6;
  * splits its bars by running session, in the colors the sessions board uses. Follows the provider;
  * ignores the time range and session filters.
  */
-export function NowPage({ allSessions, provider, providers, limits, onSelectSession, onShowAllSessions, onOpenWindow }: Props) {
+export function NowPage({ allSessions, provider, providers, limits, onSelectSession, onSelectSubagent, onShowAllSessions, onOpenWindow }: Props) {
   const now = useNow(10_000);
   const shown = provider === "all" ? providers : [provider];
   const sessions = useMemo(
@@ -77,7 +79,7 @@ export function NowPage({ allSessions, provider, providers, limits, onSelectSess
           note={`${live.length} session${live.length > 1 ? "s" : ""}`}
           aside={<button className="link-btn" onClick={onShowAllSessions}>All sessions →</button>}
         >
-          <SessionBoard sessions={sessions} onSelectSession={onSelectSession} usage={usage} showProvider={several} hovered={hovered} onHover={setHovered} />
+          <SessionBoard sessions={sessions} onSelectSession={onSelectSession} onSelectSubagent={onSelectSubagent} usage={usage} showProvider={several} hovered={hovered} onHover={setHovered} />
         </PageSection>
       ) : (
         <PageSection

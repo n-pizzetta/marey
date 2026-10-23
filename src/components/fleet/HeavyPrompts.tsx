@@ -1,10 +1,13 @@
 import { useMemo } from "react";
 import type { Session } from "../../types";
 import { aggregateByPrompt, type PromptStats } from "../../utils/aggregateByPrompt";
+import { cacheHit, inputTokens } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
+import { rangeStart, type Range } from "../../utils/range";
 
 interface Props {
   sessions: Session[];
+  range: Range;
   onSelectSession: (id: string) => void;
   limit?: number;
 }
@@ -14,10 +17,9 @@ function formatClockFrom(startedAt: string, t: number): string {
   return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
 }
 
-function cacheHit(t: PromptStats["tokens"]): number | null {
-  const pool = t.input + t.cacheRead;
-  if (pool < 5_000) return null;
-  return t.cacheRead / pool;
+function promptHit(t: PromptStats["tokens"]): number | null {
+  if (inputTokens(t) < 5_000) return null;
+  return cacheHit(t);
 }
 
 function hitColor(hit: number): string {
@@ -26,20 +28,23 @@ function hitColor(hit: number): string {
   return "var(--c-red)";
 }
 
-export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
+export function HeavyPrompts({ sessions, range, onSelectSession, limit = 10 }: Props) {
   const top = useMemo(() => {
     type Row = { session: Session; stat: PromptStats };
     const all: Row[] = [];
+    // A session started before the range only brings the turns it ran inside it.
+    const fromMs = rangeStart(range)?.getTime() ?? -Infinity;
     for (const s of sessions) {
       if (!s.turns || !s.prompts || s.turns.length === 0 || s.prompts.length === 0) continue;
-      const stats = aggregateByPrompt(s.turns, s.model, s.prompts);
+      const base = new Date(s.startedAt).getTime();
+      const stats = aggregateByPrompt(s.turns.filter((t) => base + t.t >= fromMs), s.model, s.prompts);
       for (const st of stats) {
         if (st.cost > 0) all.push({ session: s, stat: st });
       }
     }
     all.sort((a, b) => b.stat.cost - a.stat.cost);
     return all.slice(0, limit);
-  }, [sessions, limit]);
+  }, [sessions, range, limit]);
 
   if (top.length === 0) {
     return (
@@ -68,7 +73,7 @@ export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
         </div>
         {top.map((r, i) => {
           const p = r.session.prompts?.[r.stat.promptIdx];
-          const hit = cacheHit(r.stat.tokens);
+          const hit = promptHit(r.stat.tokens);
           return (
             <button
               key={`${r.session.id}-${r.stat.promptIdx}`}
@@ -84,7 +89,7 @@ export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
               <span
                 className="mono tabular right"
                 style={{ color: hit !== null ? hitColor(hit) : "var(--c-text-faint)" }}
-                title={hit !== null ? `cacheRead / (cacheRead + input) = ${formatTokens(r.stat.tokens.cacheRead)} / ${formatTokens(r.stat.tokens.cacheRead + r.stat.tokens.input)}` : "not enough input data"}
+                title={hit !== null ? `cacheRead / (input + cacheRead + cacheWrite) = ${formatTokens(r.stat.tokens.cacheRead)} / ${formatTokens(inputTokens(r.stat.tokens))}` : "not enough input data"}
               >
                 {hit !== null ? `${(hit * 100).toFixed(0)}%` : "—"}
               </span>

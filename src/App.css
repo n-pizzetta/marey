@@ -962,7 +962,7 @@ a:focus-visible,
   border-radius: 12px;
 }
 
-.detail-sticky {
+.detail-top {
   flex-shrink: 0;
   background: var(--c-bg-panel);
   border-bottom: 1px solid var(--c-hairline);

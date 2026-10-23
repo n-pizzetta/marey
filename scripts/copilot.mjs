@@ -6,13 +6,11 @@
  * with each model call. Read-only. See ARCHITECTURE.md.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { normalizeModel } from "./models.mjs";
-import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, longestRun } from "./transcript-utils.mjs";
+import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, jsonlLines, longestRun } from "./transcript-utils.mjs";
 import { briefOf, createContextCollector, instructionBlocksOf } from "./agent-context.mjs";
 
 // Copilot CLI moves ~/.copilot when COPILOT_HOME is set; so do we.
@@ -185,6 +183,8 @@ export async function parseCopilotEvents(path) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const resultById = new Map();
@@ -220,8 +220,7 @@ export async function parseCopilotEvents(path) {
   const subDone = new Map();
   const taskBriefs = new Map();
 
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(path)) {
     const type = line.match(TYPE_RE)?.[1];
     if (!type) continue;
     if (type === QUOTA_EVENT) {
@@ -263,6 +262,7 @@ export async function parseCopilotEvents(path) {
       pendingIn = { bytes: pendingIn.bytes + text.length, preview: text.slice(0, 200) };
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
       if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+      else promptsCutAt ??= tsMs;
     } else if (type === "session.usage_record") {
       const u = d.usage ?? {};
       const cacheRead = u.cacheReadTokens ?? 0;
@@ -401,6 +401,7 @@ export async function parseCopilotEvents(path) {
     toolCounts,
     absEvents,
     prompts,
+    promptsCutAt,
     toolSequence,
     turns,
     assistantMessages: turns.filter((tu) => !tu.sidechain).length,

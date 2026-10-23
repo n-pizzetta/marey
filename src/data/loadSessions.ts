@@ -2,6 +2,9 @@ import type { Session } from "../types";
 import { sessions as mockSessions } from "./mockSessions";
 import { setModelOverrides } from "../../scripts/models.mjs";
 
+/** Where the sessions on screen come from; "stale" keeps the last real list while the server doesn't answer. */
+export type DataSource = "real" | "mock" | "stale";
+
 export interface LoadResult {
   sessions: Session[];
   source: "real" | "mock";

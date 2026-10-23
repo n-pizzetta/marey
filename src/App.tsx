@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { BrandMark } from "./components/BrandMark";
 import { type FilterId } from "./components/SessionFilters";
 import { AppHeader, type ReportStatus } from "./components/AppHeader";
@@ -14,7 +14,7 @@ import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { HealthPage } from "./pages/HealthPage";
 import { ContextPage } from "./pages/ContextPage";
-import { loadSessions, loadSessionDetail } from "./data/loadSessions";
+import { loadSessions, loadSessionDetail, type DataSource } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
 import { useRecommendations } from "./utils/recommendations";
@@ -36,6 +36,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { toastError } from "./utils/toast";
 
 const POLL_MS = 5000;
+/** Shortest gap between two fetches of an open running session's detail. */
+const DETAIL_REFRESH_MS = 15_000;
 const STORAGE_KEY = "marey:state";
 
 const FILTER_IDS: FilterId[] = ["all", "live", "ghost", "friction", "failed", "lowquality"];
@@ -124,11 +126,13 @@ function writeHash(state: PersistedState) {
 function App() {
   const initial = useMemo(() => ({ ...loadPersisted(), ...parseHash() }), []);
   const [allSessions, setAllSessions] = useState<Session[]>([]);
-  const [source, setSource] = useState<"real" | "mock" | "loading">("loading");
+  const [source, setSource] = useState<DataSource | "loading">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | undefined>();
   const [parseErrors, setParseErrors] = useState<string[] | undefined>();
   const [page, setPage] = useState<Page>(initial.page && PAGE_IDS.includes(initial.page) ? initial.page : "now");
   const [selectedId, setSelectedIdInternal] = useState<string | null>(initial.id ?? null);
+  // A sub-agent picked on Now: its session opens on the sub-agent's calls.
+  const [subagentFocus, setSubagentFocus] = useState<{ sessionId: string; agentId: string } | null>(null);
   const [filter, setFilter] = useState<FilterId>(initial.filter ?? "all");
   const [preferredProvider, setPreferredProvider] = useState<Provider>(isProvider(initial.provider) ? initial.provider : "all");
   const [projectFilter, setProjectFilter] = useState<string | null>(initial.project ?? null);
@@ -208,9 +212,16 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let hadReal = false;
     async function refresh() {
       const r = await loadSessions();
       if (cancelled) return;
+      // Once real data came, a failed poll (server restart, re-parse hiccup) keeps it and the open session.
+      if (r.source === "mock" && hadReal) {
+        setSource("stale");
+        return;
+      }
+      hadReal ||= r.source === "real";
       registerProjects(r.sessions.map((x) => x.project || "unknown"));
       setAllSessions(r.sessions);
       setSource(r.source);
@@ -231,12 +242,16 @@ function App() {
     refresh();
     const hot = (import.meta as ImportMeta & { hot?: { on: (e: string, cb: () => void) => void; off?: (e: string, cb: () => void) => void } }).hot;
     const hmrActive = !!hot;
-    const id = hmrActive ? null : setInterval(refresh, POLL_MS);
+    // Only a visible tab polls, so the server stops re-parsing when nobody looks; it catches up on return.
+    const poll = () => { if (document.visibilityState === "visible") refresh(); };
+    const id = hmrActive ? null : setInterval(poll, POLL_MS);
+    if (!hmrActive) document.addEventListener("visibilitychange", poll);
     const onPush = () => refresh();
     if (hot) hot.on("marey:sessions-updated", onPush);
     return () => {
       cancelled = true;
       if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", poll);
       if (hot?.off) hot.off("marey:sessions-updated", onPush);
     };
   }, []);
@@ -271,18 +286,27 @@ function App() {
     : null;
 
   const [detail, setDetail] = useState<{ id: string; data: Session | null } | null>(null);
+  // A running session's detail follows it: fetched again when the list says it moved or ended, at
+  // most every DETAIL_REFRESH_MS (each fetch re-parses its transcript).
+  const lastDetailFetch = useRef<{ id: string; at: number } | null>(null);
+  const detailVersion = selectedSummary?.live ? selectedSummary.lastEventAt ?? "" : "ended";
   useEffect(() => {
     if (!selectedId) return;
-    let cancelled = false;
-    loadSessionDetail(selectedId)
-      .then((d) => { if (!cancelled) setDetail({ id: selectedId, data: d }); })
-      .catch(() => {
-        if (cancelled) return;
-        setDetail({ id: selectedId, data: null });
-        toastError("Could not load the session details. Showing the summary only.");
-      });
-    return () => { cancelled = true; };
-  }, [selectedId]);
+    const id = selectedId;
+    const last = lastDetailFetch.current;
+    const wait = last?.id === id ? Math.max(0, DETAIL_REFRESH_MS - (Date.now() - last.at)) : 0;
+    const timer = setTimeout(() => {
+      lastDetailFetch.current = { id, at: Date.now() };
+      // No cancel: a later poll re-running this effect must not drop the answer; the view checks its id.
+      loadSessionDetail(id)
+        .then((d) => setDetail({ id, data: d }))
+        .catch(() => {
+          setDetail((prev) => (prev?.id === id ? prev : { id, data: null }));
+          if (last?.id !== id) toastError("Could not load the session details. Showing the summary only.");
+        });
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [selectedId, detailVersion]);
   const selectedDetail = detail && detail.id === selectedId ? detail.data : null;
 
   const selected: Session | null = selectedSummary || selectedDetail
@@ -294,6 +318,10 @@ function App() {
         fileHistory: [],
         ...selectedSummary,
         ...selectedDetail,
+        // the list is fresher than a detail fetched a few seconds ago on whether the session runs
+        ...(selectedSummary && selectedDetail
+          ? { live: selectedSummary.live, liveState: selectedSummary.liveState, outcome: selectedSummary.outcome, lastEventAt: selectedSummary.lastEventAt }
+          : {}),
       } as Session)
     : null;
 
@@ -304,6 +332,8 @@ function App() {
     if (target < 0 || target >= filtered.length) return;
     setSelectedId(filtered[target].id);
   };
+  // The key handler reads the latest list: a poll can reorder it while the open session keeps its index.
+  const onNavigate = useEffectEvent(navigate);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -315,7 +345,7 @@ function App() {
         // only hijack arrows while a session is open, so pages can still scroll
         if (!selectedId || helpOpen) return;
         e.preventDefault();
-        navigate(e.key === "ArrowDown" || e.key === "j" ? "next" : "prev");
+        onNavigate(e.key === "ArrowDown" || e.key === "j" ? "next" : "prev");
       }
       else if (e.key === "Escape") {
         if (helpOpen) return;
@@ -332,8 +362,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, filtered.length, selectedId, helpOpen]);
+  }, [selectedId, helpOpen]);
 
   if (source === "loading") {
     return (
@@ -405,6 +434,10 @@ function App() {
             providers={providers}
             limits={limits}
             onSelectSession={setSelectedId}
+            onSelectSubagent={(sessionId, agentId) => {
+              setSubagentFocus({ sessionId, agentId });
+              setSelectedId(sessionId);
+            }}
             onShowAllSessions={() => setPage("sessions")}
             onOpenWindow={() => setPage("usage")}
           />
@@ -457,6 +490,13 @@ function App() {
                 toastError("Bulk delete failed: " + (await res.text()));
                 return;
               }
+              // Sessions in use again since the last refresh are skipped, with why.
+              const { results } = (await res.json()) as { results: { refused?: string; errors: string[] }[] };
+              const kept = results.filter((r) => r.refused || r.errors.length);
+              if (kept.length) {
+                const why = [...new Set(kept.map((r) => r.refused ?? r.errors.join(", ")))].join("; ");
+                toastError(`${kept.length} of ${results.length} not deleted: ${why}`);
+              }
               setCompareIds(new Set());
             }}
           />
@@ -484,7 +524,8 @@ function App() {
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay
           spike={analysisSpike}
-          sessions={scopedFiltered.filter((s) => sessionProvider(s) === "claude")}
+          // the spike is in the plan's 5h %, which every Claude session counts toward: no scope here
+          sessions={claudeSessions}
           onClose={() => setAnalysisSpike(null)}
           onSelectSession={(id) => {
             setAnalysisSpike(null);
@@ -504,6 +545,7 @@ function App() {
             hasNext={selectedIdx >= 0 && selectedIdx < filtered.length - 1}
             position={selectedIdx + 1}
             total={filtered.length}
+            focusSubagent={subagentFocus?.sessionId === selected.id ? subagentFocus.agentId : null}
           />
           </ErrorBoundary>
         </div>

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Agent } from "../types";
+import type { DataSource } from "../data/loadSessions";
 import { useRateLimits, type RateLimits } from "./rateLimits";
 import { useLiveContext } from "./liveContext";
 
@@ -7,9 +8,10 @@ import { useLiveContext } from "./liveContext";
 export type SourceIssue = { key: string; text: ReactNode; fix?: ReactNode; level: "warn" | "info" };
 
 /** What to tell about the data sources: nothing while everything works. */
-export function sourceIssues(source: "real" | "mock", providers: Agent[], limits: RateLimits | null, contextLive: boolean): SourceIssue[] {
+export function sourceIssues(source: DataSource, providers: Agent[], limits: RateLimits | null, contextLive: boolean): SourceIssue[] {
   const issues: SourceIssue[] = [];
   if (source === "mock") issues.push({ key: "mock", text: "Showing demo data: the local server is unreachable.", fix: <>Run <code>/marey:replay</code> again.</>, level: "warn" });
+  if (source === "stale") issues.push({ key: "stale", text: "The local server stopped answering: showing the last sessions it sent.", fix: <>Run <code>/marey:replay</code> again if it doesn't come back.</>, level: "warn" });
   const claudeOn = !!limits?.claude?.fiveHour || !!limits?.claude?.sevenDay;
   if (providers.includes("claude") && !claudeOn) {
     issues.push({ key: "claude", text: "Claude Code limits not connected.", fix: <>Run <code>/marey:limits</code> in Claude Code.</>, level: "warn" });
@@ -23,7 +25,7 @@ export function sourceIssues(source: "real" | "mock", providers: Agent[], limits
 }
 
 /** The data sources' issues, for the settings button's dot and its menu. */
-export function useSourceIssues(source: "real" | "mock", providers: Agent[]): SourceIssue[] {
+export function useSourceIssues(source: DataSource, providers: Agent[]): SourceIssue[] {
   const limits = useRateLimits();
   const contextLive = useLiveContext().length > 0;
   return sourceIssues(source, providers, limits, contextLive);

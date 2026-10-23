@@ -7,9 +7,8 @@
  * facets only enrich goal, summary, outcome and frictions. Read-only toward
  * Claude Code's files. See ARCHITECTURE.md.
  */
-import { readdir, readFile, writeFile, mkdir, rm, stat as fspStat } from "node:fs/promises";
-import { existsSync, createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
+import { readdir, readFile, writeFile, mkdir, open, rm, stat as fspStat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,17 +17,20 @@ import { createHash } from "node:crypto";
 import { createQualityTracker, withWindow } from "./quality.mjs";
 import {
   addTokens,
+  clip,
   countShellKinds,
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
+  jsonlLines,
   longestRun,
+  own,
   toolKey,
 } from "./transcript-utils.mjs";
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
 import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
 import { freshest } from "./provider-limits.mjs";
-import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModelOverrides } from "./models.mjs";
+import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
@@ -50,6 +52,7 @@ const PLUGIN_CACHE_DIR = join(DATA, "cache");
 
 /** User-role lines that are not prompts the user typed. */
 const NON_PROMPT_RE = /^\s*(<(command-|local-command-|task-notification|system-reminder)|\[Request interrupted|Caveat:)/;
+const INTERRUPTED_RE = /^\s*\[Request interrupted/;
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
@@ -67,13 +70,13 @@ function askText(tool, input) {
 /** What went wrong with a call, if anything: a denial, a wait on the user, or a failure. */
 function incidentOf(j, tr, body, call, tsMs) {
   const base = { t: tsMs, tool: call?.tool ?? null, ...(call?.command ? { command: call.command } : {}) };
-  if (typeof j.toolDenialKind === "string") return { ...base, kind: "denial", denial: j.toolDenialKind, text: body.slice(0, 300) };
+  if (typeof j.toolDenialKind === "string") return { ...base, kind: "denial", denial: j.toolDenialKind, text: clip(body, 300) };
   if (call && WAIT_TOOLS.has(call.tool) && tsMs && call.tsMs && tsMs >= call.tsMs) {
     return { t: call.tsMs, tool: call.tool, kind: "wait", ms: tsMs - call.tsMs, ...(call.ask ? { text: call.ask } : {}) };
   }
   if (!tr.is_error || !body) return null;
   const { text, noise } = stripNoise(body);
-  return { ...base, kind: "error", text: text.slice(0, 300), ...(noise.length ? { noise } : {}) };
+  return { ...base, kind: "error", text: clip(text, 300), ...(noise.length ? { noise } : {}) };
 }
 
 /** "Bash: pnpm test", "Edit: src/App.tsx": the call a session is running or asking to run. */
@@ -83,6 +86,28 @@ function describeCall(call) {
   if (call.command) return `${call.tool}: ${call.command.split("\n")[0].replace(/^cd\s+\S+\s*&&\s*/, "").slice(0, 120)}`;
   if (call.file) return `${call.tool}: ${call.file.split("/").pop()}`;
   return call.tool;
+}
+
+/** A sub-agent that hasn't ended its turn but has written nothing for this long was stopped. */
+const SUBAGENT_STALE_MS = 30 * 60_000;
+
+/**
+ * A running Claude Code session's sub-agents at a glance: those at work, oldest first, with their last
+ * call, and how many are done. One that hasn't ended its turn but has written nothing for
+ * SUBAGENT_STALE_MS was stopped (killed, or interrupted with its session) and counts as done.
+ */
+export function liveSubagentsOf(subs, now) {
+  const running = subs
+    .filter((sub) => !sub.ended && sub.lastTs && now - sub.lastTs <= SUBAGENT_STALE_MS)
+    .sort((a, b) => (a.firstTs ?? 0) - (b.firstTs ?? 0))
+    .map((sub) => ({
+      id: sub.agentId ?? null,
+      name: sub.agentName ?? sub.agentType ?? "sub-agent",
+      description: sub.description ?? null,
+      startedAt: new Date(sub.firstTs ?? sub.lastTs).toISOString(),
+      call: describeCall(sub.lastCall),
+    }));
+  return { running, done: subs.length - running.length };
 }
 
 /** The start of the last thing the main thread said. */
@@ -109,10 +134,9 @@ export function liveStateOf({ live, pending, lastCall = null, lastText, lastTs, 
   return { state: "your-turn", text: lastText, since: iso(live?.statusAt ?? lastTs) };
 }
 
-const costFor = costOf;
-/** Priced per turn when available, so sessions that switch models cost right. */
+/** Priced per turn when available, so sessions that switch models cost right; totals alone at the base tier. */
 const sessionCost = (model, tokens, turns) =>
-  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costFor(model, tokens);
+  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costOf(model, tokens, 0);
 
 /** Model that produced the most output tokens (sessions can switch models). */
 const dominantModel = (turns, fallback) => {
@@ -124,10 +148,11 @@ const dominantModel = (turns, fallback) => {
   return best;
 };
 
-const baselineCostFor = (model, tokens) => {
-  const p = priceFor(model);
+/** What the tokens would cost with no prompt cache: every input token at the full input rate. */
+const baselineCostFor = (model, tokens, prompt) => {
   const t = tokens || {};
-  const allInput = (t.input ?? 0) + (t.cacheRead ?? 0) + (t.cacheWrite ?? 0);
+  const allInput = promptTokens(t);
+  const p = priceFor(model, prompt ?? allInput);
   return (allInput / 1e6) * p.in + ((t.output ?? 0) / 1e6) * p.out;
 };
 
@@ -213,16 +238,35 @@ async function readFileHistory(sessionId, pathByHash) {
     });
 }
 
-async function readPluginCache(sessionId, startedAtMs) {
+/** Hook capture counts by file (`readPluginCache`). */
+const captureCache = new Map();
+
+/**
+ * What the plugin hook captured of a session: its calls (`entries`, a full read only), how many,
+ * and the time of the last capture and of the last stop. A light read keeps the counts per file
+ * and reads the file again only when its mtime or size changes: the hook appends to it on every call.
+ */
+async function readPluginCache(sessionId, startedAtMs, { light = false } = {}) {
   const file = join(PLUGIN_CACHE_DIR, `${sessionId}.jsonl`);
-  if (!existsSync(file)) return { entries: [], lastTsMs: 0, stopTsMs: 0 };
+  if (!light) return readCaptureFile(file, startedAtMs);
+  readThisParse.add(file);
+  let st;
+  try { st = await fspStat(file); } catch { captureCache.delete(file); return { entries: [], count: 0, lastTsMs: 0, stopTsMs: 0 }; }
+  const hit = captureCache.get(file);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.data;
+  const { count, lastTsMs, stopTsMs } = await readCaptureFile(file, startedAtMs);
+  const data = { entries: [], count, lastTsMs, stopTsMs };
+  captureCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, data });
+  return data;
+}
+
+async function readCaptureFile(file, startedAtMs) {
+  if (!existsSync(file)) return { entries: [], count: 0, lastTsMs: 0, stopTsMs: 0 };
   const entries = [];
   let lastTsMs = 0;
   let stopTsMs = 0;
   try {
-    const stream = createReadStream(file, { encoding: "utf8" });
-    const rl = createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of rl) {
+    for await (const line of jsonlLines(file)) {
       if (!line.trim()) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
@@ -245,44 +289,14 @@ async function readPluginCache(sessionId, startedAtMs) {
       entries.push(entry);
     }
   } catch { /* skip */ }
-  return { entries, lastTsMs, stopTsMs };
-}
-
-function mergeToolSequences(transcriptSeq, pluginSeq) {
-  if (pluginSeq.length === 0) return transcriptSeq;
-  if (transcriptSeq.length === 0) return pluginSeq;
-  const tagged = [
-    ...transcriptSeq.map((e) => ({ ...e, _src: e.source ?? "transcript" })),
-    ...pluginSeq.map((e) => ({ ...e, _src: "plugin" })),
-  ];
-  tagged.sort((a, b) => a.t - b.t);
-  const out = [];
-  for (const e of tagged) {
-    const prev = out[out.length - 1];
-    if (prev && prev.tool === e.tool && Math.abs(prev.t - e.t) < 500) {
-      // duplicate within 500ms — prefer transcript (richer fields)
-      if (prev._src === "transcript" && e._src === "plugin") continue;
-      if (prev._src === "plugin" && e._src === "transcript") {
-        out[out.length - 1] = e;
-        continue;
-      }
-    }
-    out.push(e);
-  }
-  return out.map((e) => {
-    // strip the internal tag, keep `source` only when it's "plugin"
-    const { _src, ...rest } = e;
-    if (_src === "plugin") rest.source = "plugin";
-    return rest;
-  });
+  return { entries, count: entries.length, lastTsMs, stopTsMs };
 }
 
 /** Read history.jsonl line-by-line, group user messages by sessionId. */
 async function readHistoryBySession() {
   const bySession = new Map();
   if (!existsSync(HISTORY)) return bySession;
-  const rl = createInterface({ input: createReadStream(HISTORY, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(HISTORY)) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
@@ -301,32 +315,161 @@ async function readHistoryBySession() {
 
 /** Parsed transcripts keyed by path, reused while the file's mtime and size are unchanged. */
 const transcriptCache = new Map();
+/** Paths read by the parse in progress: once it ends, the others (deleted or skipped files) leave the caches. */
+let readThisParse = new Set();
 
-async function readTranscriptFile(path, { sidechain = false, agent = "claude" } = {}) {
-  let st;
-  try { st = await fspStat(path); } catch { return null; }
-  const cached = transcriptCache.get(path);
-  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.data;
-  const data =
-    agent === "codex" ? await parseCodexRollout(path)
-    : agent === "copilot" ? await parseCopilotEvents(path)
-    : await parseTranscriptFile(path, sidechain);
-  transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, data });
-  return data;
+function dropUnreadFiles() {
+  for (const cache of [transcriptCache, captureCache]) {
+    for (const path of cache.keys()) if (!readThisParse.has(path)) cache.delete(path);
+  }
+}
+
+/** How many parsed transcripts the cache holds (tests). */
+export const cachedTranscriptCount = () => transcriptCache.size;
+/** Light reads of Claude Code transcripts so far: from the start, or of what was appended (tests). */
+export const claudeReads = { whole: 0, appended: 0 };
+
+/**
+ * What the server keeps of a parsed transcript between parses: what the list, the recommendations
+ * and the Context page read. The calls, prompt texts, turn previews, timeline and file paths are
+ * parsed again when a session is opened (`sessionDetail`). structuredClone copies the strings kept,
+ * so that a preview no longer holds on to the whole tool output or message it was cut from.
+ */
+function lightTranscript(t) {
+  const { toolSequence: _calls, absEvents: _events, pathByHash: _paths, subPrompt: _prompt, ...rest } = t;
+  return structuredClone({
+    ...rest,
+    lastReplyText: lastReply(t.turns),
+    firstUserText: t.firstUserText?.slice(0, 220) ?? t.firstUserText,
+    prompts: t.prompts.map(({ tsMs, preview }) => ({ tsMs, preview })),
+    turns: t.turns.map(({ inPreview: _in, outPreview: _out, ...tu }) => tu),
+  });
 }
 
 /**
- * One pass over a Claude Code transcript (.jsonl).
+ * A parsed transcript. `light` keeps `lightTranscript` of it in the cache; `cached: false` (a
+ * session's detail) parses it whole and keeps nothing.
+ */
+async function readTranscriptFile(path, { sidechain = false, agent = "claude", light = false, cached = true } = {}) {
+  if (cached) readThisParse.add(path);
+  let st;
+  try { st = await fspStat(path); } catch { transcriptCache.delete(path); return null; }
+  const hit = cached && transcriptCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.light === light) {
+    // Not written to for a while: its parser goes, the light copy stays.
+    if (hit.parser && Date.now() - st.mtimeMs > HOT_MS) hit.parser = null;
+    return hit.data;
+  }
+  let parsed;
+  try {
+    if (cached && light && agent === "claude") return await readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
+    parsed =
+      agent === "codex" ? await parseCodexRollout(path)
+      : agent === "copilot" ? await parseCopilotEvents(path)
+      : await parseTranscriptFile(path, sidechain);
+  } catch (err) {
+    // Deleted between the stat and the read, or unreadable: no transcript, like a failed stat.
+    transcriptCache.delete(path);
+    warnOnce(path, `[marey] could not read ${path}: ${err.message}`);
+    return null;
+  }
+  if (!cached) return parsed;
+  const data = light ? lightTranscript(parsed) : parsed;
+  transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, light, data });
+  return data;
+}
+
+/** A transcript written to this recently keeps its parser between light parses, which then read only what was appended. */
+const HOT_MS = 10 * 60_000;
+/** Bytes compared at the start of a transcript and before the end of what was read: they tell an append from a rewrite. */
+const MARK_BYTES = 64;
+const READ_CHUNK = 1 << 20;
+
+/**
+ * A light read of a Claude Code transcript. While it is being written (`HOT_MS`), its parser stays
+ * in the cache entry and the next read feeds it only the lines appended since; a file replaced or
+ * rewritten (another inode, shorter, other bytes where the last read started or ended) is read again.
+ */
+async function readClaudeLight(path, st, sidechain, hit) {
+  const resume = !!hit?.parser && st.ino === hit.ino && st.size >= hit.offset && (await marksOf(path, hit.offset)) === hit.marks;
+  const parser = resume ? hit.parser : createTranscriptParser(path, sidechain);
+  const offset = await feedFrom(path, resume ? hit.offset : 0, parser);
+  claudeReads[resume ? "appended" : "whole"]++;
+  const entry = { mtimeMs: st.mtimeMs, size: st.size, light: true, data: lightTranscript(parser.result()) };
+  if (Date.now() - st.mtimeMs <= HOT_MS) Object.assign(entry, { parser, offset, ino: st.ino, marks: await marksOf(path, offset) });
+  transcriptCache.set(path, entry);
+  return entry.data;
+}
+
+/** The first bytes of a file and the last ones before `offset`. */
+async function marksOf(path, offset) {
+  const fh = await open(path, "r");
+  try {
+    const n = Math.min(MARK_BYTES, offset);
+    const head = Buffer.alloc(n);
+    const tail = Buffer.alloc(n);
+    await fh.read(head, 0, n, 0);
+    await fh.read(tail, 0, n, offset - n);
+    return `${head.toString("base64")}:${tail.toString("base64")}`;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Feeds the lines of a transcript from byte `from` to its end into `parser`, and returns the offset
+ * after the last line read. A last line without its newline is read when it is whole JSON, as
+ * readline would; one still being written is left for the next read.
+ */
+async function feedFrom(path, from, parser) {
+  const fh = await open(path, "r");
+  try {
+    const chunk = Buffer.allocUnsafe(READ_CHUNK);
+    let offset = from;
+    let pending = Buffer.alloc(0);
+    for (let pos = from; ; ) {
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, pos);
+      if (bytesRead === 0) break;
+      pos += bytesRead;
+      const buf = pending.length ? Buffer.concat([pending, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      let start = 0;
+      for (let nl = buf.indexOf(10); nl !== -1; nl = buf.indexOf(10, start)) {
+        feedLine(parser, buf.toString("utf8", start, nl));
+        start = nl + 1;
+      }
+      offset += start;
+      pending = Buffer.from(buf.subarray(start));
+    }
+    if (pending.length) {
+      let j;
+      try { j = JSON.parse(pending.toString("utf8")); } catch { return offset; }
+      parser.line(j);
+      offset += pending.length;
+    }
+    return offset;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Reads a Claude Code transcript (.jsonl) one parsed line at a time (`line`); `result` says what the
+ * lines so far add up to and leaves the parser as it was, so lines appended later can follow.
  *
  * Claude Code writes one line per content block (thinking / text / tool_use),
  * each repeating the message id and its full `usage`. Lines are merged into a
  * single turn per API message (id, else requestId); the last line's usage wins
  * (it carries the final output_tokens). Summing lines would double-count.
+ *
+ * What it keeps across lines is copied (`clip`, `own`): a server keeps the parser of a transcript
+ * that is still being written, and a slice would keep every tool output it was cut from.
  */
-async function parseTranscriptFile(path, sidechain) {
+function createTranscriptParser(path, sidechain) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const turnById = new Map();
@@ -346,6 +489,8 @@ async function parseTranscriptFile(path, sidechain) {
   let agentId = null;
   let subPrompt = null;
   let subBrief = null;
+  // Whether the last turn ended: a reply with no call, a call that ends it (SubagentHandback) or an interruption.
+  let ended = false;
   // What the Context page shows: instruction files loaded, memory read and written, files written.
   const context = createContextCollector();
   let userMessages = 0;
@@ -363,24 +508,26 @@ async function parseTranscriptFile(path, sidechain) {
   let version = null;
   // Sub-agent transcripts are scored as part of nothing: quality is about the main context.
   const quality = sidechain ? null : createQualityTracker();
+  // A line written in another session (`copiedTurns`): a background fork's copies keep the original's
+  // session_id, other copies the original's sessionId. A sub-agent's lines carry its session's id.
+  const ownId = sidechain ? null : basename(path, ".jsonl");
+  const copied = (j) =>
+    (typeof j.session_id === "string" && j.session_id !== j.sessionId) || (!!ownId && typeof j.sessionId === "string" && j.sessionId !== ownId);
 
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    let j;
-    try { j = JSON.parse(line); } catch { continue; }
+  function line(j) {
+    // Valid JSON that is not a record (`null`, a number) is skipped like an unreadable line.
+    if (!j || typeof j !== "object") return;
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
-    if (!customTitle && j.type === "custom-title" && typeof j.customTitle === "string") {
-      customTitle = j.customTitle;
-    }
+    // The latest title wins: `/rename` appends a new one.
+    if (j.type === "custom-title" && typeof j.customTitle === "string") customTitle = j.customTitle;
     if (j.type === "attachment") {
       if (j.attachment?.type === "instructions") context.instructions(j.timestamp ? new Date(j.timestamp).getTime() : null, j.attachment.files);
       else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
     }
     const msg = j.message;
-    if (!msg) continue;
+    if (!msg) return;
     const tsMs = j.timestamp ? new Date(j.timestamp).getTime() : null;
     if (tsMs) {
       if (firstTs === null) firstTs = tsMs;
@@ -389,8 +536,9 @@ async function parseTranscriptFile(path, sidechain) {
     }
 
     if (msg.role === "assistant") {
-      if (msg.model === "<synthetic>") continue;
-      const key = msg.id || j.requestId || `line-${turns.length}-${tsMs}`;
+      if (msg.model === "<synthetic>") return;
+      const msgId = msg.id || j.requestId || null;
+      const key = msgId ?? `line-${turns.length}-${tsMs}`;
       let turn = turnById.get(key);
       if (!turn) {
         const turnModel = normalizeModel(msg.model) ?? model;
@@ -402,9 +550,11 @@ async function parseTranscriptFile(path, sidechain) {
           tools: [],
           inBytes: pendingInBytes,
           outBytes: 0,
-          inPreview: pendingInPreview.slice(0, 240),
+          inPreview: clip(pendingInPreview, 240),
           outPreview: "",
           ...(sidechain ? { sidechain: true } : {}),
+          ...(msgId ? { msgId } : {}),
+          ...(copied(j) ? { copy: true } : {}),
         };
         turnById.set(key, turn);
         turns.push(turn);
@@ -424,9 +574,10 @@ async function parseTranscriptFile(path, sidechain) {
       }
       const content = Array.isArray(msg.content) ? msg.content : [];
       for (const c of content) {
+        if (!c || typeof c !== "object") continue;
         if (c.type === "text" && typeof c.text === "string") {
           turn.outBytes += c.text.length;
-          if (!turn.outPreview) turn.outPreview = c.text.slice(0, 240);
+          if (!turn.outPreview) turn.outPreview = clip(c.text, 240);
         }
         if (c.type !== "tool_use" || typeof c.name !== "string") continue;
         if (c.id) {
@@ -435,7 +586,7 @@ async function parseTranscriptFile(path, sidechain) {
         }
         const name = toolKey(c.name);
         const input = c.input ?? {};
-        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? input.command.slice(0, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: askText(c.name, input) });
+        if (c.id) callById.set(c.id, { tool: c.name, tsMs, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
         if (c.id) lastCallId = c.id;
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
@@ -462,20 +613,23 @@ async function parseTranscriptFile(path, sidechain) {
           else if (typeof input.pattern === "string") preview = input.pattern;
           else if (typeof input.prompt === "string") { preview = input.prompt; full = input.prompt; }
           else preview = Object.keys(input).join(", ");
-          const entry = { tsMs, tool: c.name, preview: preview.slice(0, 160), id: c.id };
-          if (full && full.length > 160) entry.full = full.slice(0, 8000);
+          const entry = { tsMs, tool: c.name, preview: clip(preview, 160), id: c.id };
+          if (full && full.length > 160) entry.full = clip(full, 8000);
           toolSequence.push(entry);
         }
       }
+      if (content.some((c) => c?.type === "tool_use")) ended = false;
+      else if (msg.stop_reason === "end_turn") ended = true;
     } else if (msg.role === "user") {
       if (j.isCompactSummary) quality?.onCompaction();
-      if (j.isMeta || j.isCompactSummary) continue;
+      if (j.isMeta || j.isCompactSummary) return;
       const content = msg.content;
       let text = null;
       if (typeof content === "string") text = content;
       else if (Array.isArray(content)) {
         const toolResults = content.filter((c) => c && c.type === "tool_result");
         if (toolResults.length > 0) {
+          ended = !!j.toolEndsTurn;
           const ranAgent = typeof j.toolUseResult?.agentId === "string" ? j.toolUseResult.agentId : null;
           for (const tr of toolResults) {
             if (!tr.tool_use_id) continue;
@@ -495,7 +649,7 @@ async function parseTranscriptFile(path, sidechain) {
             if (!body) continue;
             quality?.onToolResult(tr.tool_use_id, body.length);
             resultById.set(tr.tool_use_id, {
-              text: body.slice(0, 240),
+              text: clip(body, 240),
               truncated: body.length > 240,
               isError: !!tr.is_error,
               bytes: body.length,
@@ -503,19 +657,21 @@ async function parseTranscriptFile(path, sidechain) {
             pendingInBytes += body.length;
             if (!pendingInPreview) pendingInPreview = `[tool_result] ${body.slice(0, 200)}`;
           }
-          continue;
+          return;
         }
         const textPart = content.find((c) => c && c.type === "text");
         if (textPart?.text) text = textPart.text;
-      } else continue;
-      // Sub-agent transcripts start with the parent's instructions, not a user prompt.
-      if (sidechain || (text && NON_PROMPT_RE.test(text))) {
+      } else return;
+      ended = !!text && INTERRUPTED_RE.test(text);
+      // Sub-agent transcripts start with the parent's instructions, not a user prompt. Older Claude Code
+      // versions wrote sub-agent lines inline, flagged `isSidechain`: their tokens count, not as prompts.
+      if (sidechain || j.isSidechain === true || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
         if (sidechain && text && subPrompt === null) {
-          subPrompt = text.slice(0, 1500);
+          subPrompt = clip(text, 1500);
           subBrief = briefOf(text);
         }
-        continue;
+        return;
       }
       userMessages++;
       if (!firstUserText && text) firstUserText = text;
@@ -524,59 +680,83 @@ async function parseTranscriptFile(path, sidechain) {
         pendingInPreview = text.slice(0, 200);
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
-      if (prompts.length < 100 && text) {
-        prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+      if (text) {
+        if (prompts.length < 100) prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+        else promptsCutAt ??= tsMs;
       }
     }
   }
 
-  for (const entry of toolSequence) {
-    if (entry.id && resultById.has(entry.id)) entry.result = resultById.get(entry.id);
-    if (entry.id && agentIdByToolUse.has(entry.id)) entry.agentId = agentIdByToolUse.get(entry.id);
-  }
-  // runningTool: latest tool_use in sequence without a result yet
-  let runningTool = null;
-  for (let i = toolSequence.length - 1; i >= 0; i--) {
-    const entry = toolSequence[i];
-    if (entry.id && !entry.result) {
-      runningTool = { tool: entry.tool, preview: entry.preview, tsMs: entry.tsMs };
-      break;
+  function result() {
+    // Each call with its result and the sub-agent it ran, on copies: the parser keeps its entries.
+    const calls = toolSequence.map(({ id, ...entry }) => ({
+      ...entry,
+      ...(id && resultById.has(id) ? { result: resultById.get(id) } : {}),
+      ...(id && agentIdByToolUse.has(id) ? { agentId: agentIdByToolUse.get(id) } : {}),
+    }));
+    // runningTool: latest tool_use in sequence without a result yet
+    let runningTool = null;
+    for (let i = toolSequence.length - 1; i >= 0; i--) {
+      if (toolSequence[i].id && !calls[i].result) {
+        runningTool = { tool: calls[i].tool, preview: calls[i].preview, tsMs: calls[i].tsMs };
+        break;
+      }
+      if (calls[i].result) break;
     }
-    if (entry.result) break;
-  }
-  for (const entry of toolSequence) delete entry.id;
 
-  const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
-  return {
-    longestRunMs: sidechain ? 0 : longestRun([...turns.map((tu) => tu.tsMs), ...absEvents.filter((e) => e.kind === "prompt").map((e) => e.tsMs)]),
-    tokens,
-    toolCounts,
-    absEvents,
-    prompts,
-    toolSequence,
-    turns,
-    assistantMessages: turns.length,
-    userMessages,
-    commits,
-    shell,
-    model,
-    firstTs,
-    lastTs,
-    activeMs,
-    cwd,
-    firstUserText,
-    pathByHash,
-    runningTool,
-    customTitle,
-    version,
-    incidents,
-    toolResults: resultCount,
-    pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
-    lastCall: lastCallId ? callById.get(lastCallId) : null,
-    quality: quality?.finish(turns) ?? null,
-    context: context.finish(),
-    ...(sidechain ? { agentId, subPrompt, subBrief } : {}),
-  };
+    const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
+    return {
+      longestRunMs: sidechain ? 0 : longestRun([...turns.map((tu) => tu.tsMs), ...absEvents.filter((e) => e.kind === "prompt").map((e) => e.tsMs)]),
+      tokens,
+      toolCounts,
+      absEvents,
+      prompts,
+      promptsCutAt,
+      toolSequence: calls,
+      turns,
+      assistantMessages: turns.length,
+      userMessages,
+      commits,
+      shell,
+      model,
+      firstTs,
+      lastTs,
+      activeMs,
+      cwd,
+      firstUserText,
+      pathByHash,
+      runningTool,
+      customTitle,
+      version,
+      incidents,
+      toolResults: resultCount,
+      pendingCall: lastCallId && !answered.has(lastCallId) ? callById.get(lastCallId) : null,
+      lastCall: lastCallId ? callById.get(lastCallId) : null,
+      quality: quality?.finish(turns) ?? null,
+      context: context.finish(),
+      ...(sidechain ? { agentId, subPrompt, subBrief, ended } : {}),
+    };
+  }
+
+  return { line, result };
+}
+
+/** A transcript line into `parser`; blank and unreadable lines are skipped. */
+function feedLine(parser, text) {
+  if (!text.trim()) return;
+  let j;
+  try { j = JSON.parse(text); } catch { return; }
+  parser.line(j);
+}
+
+/**
+ * One pass over a Claude Code transcript: `createTranscriptParser` fed every line. Lines end at
+ * `\n` only (`feedFrom`): readline also ends them at U+2028 and U+2029, which JSON strings may hold.
+ */
+async function parseTranscriptFile(path, sidechain) {
+  const parser = createTranscriptParser(path, sidechain);
+  await feedFrom(path, 0, parser);
+  return parser.result();
 }
 
 function relativizeEvents(absEvents, startedAt) {
@@ -609,11 +789,13 @@ function relativizeToolSequence(seq, startedAt) {
   }));
 }
 
-function relativizeTurns(turns, prompts, startedAt) {
+function relativizeTurns(turns, prompts, startedAt, promptsCutAt = null) {
   return turns.map((tu) => {
     const t = tu.tsMs && startedAt ? Math.max(0, tu.tsMs - startedAt) : 0;
     let promptIdx;
-    for (let i = prompts.length - 1; i >= 0; i--) {
+    // After the last prompt kept, a turn belongs to one that wasn't: to none, not to prompt #100.
+    const cut = promptsCutAt !== null && (tu.tsMs ?? 0) >= promptsCutAt;
+    for (let i = cut ? -1 : prompts.length - 1; i >= 0; i--) {
       const pt = prompts[i].tsMs ?? 0;
       if (pt <= (tu.tsMs ?? 0)) { promptIdx = i; break; }
     }
@@ -633,40 +815,77 @@ function relativizeTurns(turns, prompts, startedAt) {
   });
 }
 
-function isClaudePidAlive(pid) {
-  if (!pid || typeof pid !== "number") return false;
+/** The pids among `pids` that run Claude Code: alive, and `claude` in their command (pids get reused). One `ps` for all. */
+export function claudePids(pids) {
+  const alive = pids.filter((pid) => {
+    if (!pid || typeof pid !== "number") return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      // EPERM: alive, owned by another user (sudo).
+      return err.code === "EPERM";
+    }
+  });
+  if (alive.length === 0) return new Set();
+  let out;
   try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
+    out = execFileSync("ps", ["-p", alive.join(","), "-o", "pid=,comm="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch (err) {
+    // ps exits 1 when one of the pids has exited since: the others are still listed.
+    out = typeof err.stdout === "string" ? err.stdout : "";
   }
-  try {
-    const comm = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return /claude/i.test(comm);
-  } catch {
-    return false;
+  const found = new Set();
+  for (const line of out.split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m && /claude/i.test(m[2])) found.add(Number(m[1]));
   }
+  return found;
 }
 
+const TITLE_TAIL_BYTES = 64 * 1024;
+
+/**
+ * A transcript's latest title, without reading it whole. Claude Code appends the title again as the
+ * session goes on (and `/rename` a new one), so the end of the file has the latest; a title set
+ * once, early in a long file, is in its first lines.
+ */
 async function readCustomTitleFast(path) {
-  // Scan first ~20 lines for a custom-title entry (cheap — don't load whole file).
-  if (!existsSync(path)) return null;
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  let i = 0;
-  for await (const line of rl) {
-    i++;
-    if (i > 50) break;
-    if (!line.trim()) continue;
+  const titleOf = (line) => {
+    if (!line.includes("custom-title")) return null;
     try {
       const j = JSON.parse(line);
-      if (j.type === "custom-title" && typeof j.customTitle === "string") {
-        rl.close();
-        return j.customTitle;
-      }
-    } catch { /* skip */ }
+      return j?.type === "custom-title" && typeof j.customTitle === "string" ? j.customTitle : null;
+    } catch {
+      return null; // the cut first line of the tail, or a line being written
+    }
+  };
+  try {
+    const fh = await open(path, "r");
+    let tail;
+    let size;
+    try {
+      ({ size } = await fh.stat());
+      const n = Math.min(size, TITLE_TAIL_BYTES);
+      const buf = Buffer.alloc(n);
+      await fh.read(buf, 0, n, size - n);
+      tail = buf.toString("utf8").split("\n");
+    } finally {
+      await fh.close();
+    }
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const title = titleOf(tail[i]);
+      if (title) return title;
+    }
+    if (size <= TITLE_TAIL_BYTES) return null;
+    let i = 0;
+    for await (const line of jsonlLines(path)) {
+      if (++i > 50) break;
+      const title = titleOf(line);
+      if (title) return title;
+    }
+  } catch {
+    /* gone or unreadable: no title */
   }
   return null;
 }
@@ -714,12 +933,12 @@ async function indexTranscripts() {
  * Sub-agent transcripts: <project>/<sessionId>/subagents/agent-<agentId>.jsonl, with an optional
  * agent-<agentId>.meta.json ({ agentType, description }) that names the run.
  */
-async function readSubagents(entry, sessionId) {
+async function readSubagents(entry, sessionId, read) {
   const dir = join(entry.dir, sessionId, "subagents");
   const files = (await readDirSafe(dir)).filter((f) => f.endsWith(".jsonl"));
   const out = [];
   for (const f of files) {
-    const t = await readTranscriptFile(join(dir, f), { sidechain: true });
+    const t = await readTranscriptFile(join(dir, f), { ...read, sidechain: true });
     if (!t) continue;
     const meta = await readJsonSafe(join(dir, f.replace(/\.jsonl$/, ".meta.json")));
     const label = [meta?.agentType, meta?.description].filter((s) => typeof s === "string" && s).join(" · ");
@@ -734,6 +953,33 @@ async function readSubagents(entry, sessionId) {
     });
   }
   return out;
+}
+
+/**
+ * A resumed or background-forked session continues in a transcript that starts with a copy of the
+ * conversation, message ids included. A message belongs to the transcript whose line isn't marked as
+ * a copy (`copy`), else to the one that started first (then ended first). Session id → the message
+ * ids its transcript holds that another one owns.
+ */
+async function copiedTurns(index, read) {
+  const transcripts = [];
+  for (const [id, entry] of index) {
+    const t = await readTranscriptFile(entry.path, read);
+    if (t?.turns.length) transcripts.push({ id, turns: t.turns, firstTs: t.firstTs ?? 0, lastTs: t.lastTs ?? 0 });
+  }
+  transcripts.sort((a, b) => a.firstTs - b.firstTs || a.lastTs - b.lastTs || (a.id < b.id ? -1 : 1));
+  const owner = new Map();
+  for (const copy of [false, true]) {
+    for (const { id, turns } of transcripts) {
+      for (const tu of turns) if (tu.msgId && !!tu.copy === copy && !owner.has(tu.msgId)) owner.set(tu.msgId, id);
+    }
+  }
+  const copies = new Map();
+  for (const { id, turns } of transcripts) {
+    const theirs = turns.filter((tu) => tu.msgId && owner.get(tu.msgId) !== id).map((tu) => tu.msgId);
+    if (theirs.length) copies.set(id, new Set(theirs));
+  }
+  return copies;
 }
 
 /** Alive pid files, expanded to their /clear chains. id → live info. */
@@ -821,21 +1067,39 @@ function agentContextOf(agent, t, subs) {
   };
 }
 
-async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [] }) {
+/**
+ * `read` says how transcripts are read (`readTranscriptFile`): with `light`, the session leaves out
+ * the detail view's fields (`DETAIL_FIELDS`, `sessionDetail` fills them).
+ */
+async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], copies = null, read = {} }) {
   const agent = entry?.agent ?? "claude";
-  const t = entry ? await readTranscriptFile(entry.path, { agent }) : null;
+  const light = !!read.light;
+  const t = entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
   if (!t && !meta && !live) return null;
   if (t && !t.firstTs && !meta && !live) return null;
-  const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id) : [];
+  const subs = agent === "codex" ? codexChildren.map(asSidechain) : agent === "claude" && entry ? await readSubagents(entry, id, read) : [];
 
   const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
   const startedAtMs = t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
   const isLive = !!live?.isLive;
   const lastTs = Math.max(t?.lastTs ?? 0, ...subs.map((sub) => sub.lastTs ?? 0)) || null;
 
-  const mainTurns = t?.turns ?? [];
-  const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns)].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
-  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs);
+  // Each message counts once: not the ones another transcript owns (`copies`), nor the ones a
+  // sub-agent copied from the conversation it started from (an aside question, a compaction).
+  const seen = new Set(copies);
+  const dropped = [];
+  const owned = (tu) => {
+    if (!tu.msgId) return true;
+    if (seen.has(tu.msgId)) {
+      dropped.push(tu);
+      return false;
+    }
+    seen.add(tu.msgId);
+    return true;
+  };
+  const mainTurns = (t?.turns ?? []).filter(owned);
+  const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns.filter(owned))].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
+  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs, t?.promptsCutAt ?? null);
 
   const toolCounts = {};
   for (const src of [t, ...subs]) {
@@ -849,13 +1113,18 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     // Transcript deleted: session-meta only has input/output totals.
     tokens = { ...emptyTokens(), input: meta?.input_tokens ?? 0, output: meta?.output_tokens ?? 0 };
   }
+  // What the dropped turns added to their transcript's totals.
+  for (const tu of dropped) {
+    for (const k of Object.keys(tokens)) tokens[k] -= tu.tokens[k] ?? 0;
+    for (const tool of tu.tools) if (!--toolCounts[tool]) delete toolCounts[tool];
+  }
   const model = dominantModel(allTurns, t?.model ?? DEFAULT_MODEL);
 
   const msgs = history.get(id) ?? [];
   const firstPrompt = t?.firstUserText ?? meta?.first_prompt ?? msgs[0]?.display ?? "";
   const customTitle = t?.customTitle ?? null;
   const fileHistory = await readFileHistory(id, t?.pathByHash);
-  const pluginCache = await readPluginCache(id, startedAtMs);
+  const pluginCache = await readPluginCache(id, startedAtMs, read);
   const totalTools = Object.values(toolCounts).reduce((a, b) => a + b, 0);
   const empty = !!t && t.userMessages === 0 && totalTools === 0;
   // Ghost actions (reveal, delete) only know Claude Code's projects/ layout.
@@ -881,10 +1150,13 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     messages: t ? t.assistantMessages + t.userMessages : (meta?.user_message_count ?? 0) + (meta?.assistant_message_count ?? 0),
     toolCounts,
     tokens,
-    costUsd: allTurns.length ? sessionCost(model, tokens, allTurns) : costOf(model, tokens),
-    baselineCostUsd: baselineCostFor(model, tokens),
+    costUsd: sessionCost(model, tokens, allTurns),
+    // Per turn too, so sub-agents on another model are compared at their own rates.
+    baselineCostUsd: allTurns.length
+      ? allTurns.reduce((sum, tu) => sum + baselineCostFor(tu.model ?? model, tu.tokens), 0)
+      : baselineCostFor(model, tokens, 0),
     frictions: isLive ? [] : mapFrictions(facet),
-    timeline: t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
+    timeline: light ? [] : t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
     filesChanged: fileHistory.length || t?.filesChanged || meta?.files_modified || 0,
     commits: t ? t.commits : meta?.git_commits ?? 0,
@@ -900,16 +1172,19 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     ...(t?.version ? { version: t.version } : {}),
     ...(t?.contextWindow ? { contextWindow: t.contextWindow } : {}),
     ...(agent === "copilot" ? { aiCredits: t?.aiCredits ?? null } : {}),
-    fileHistory,
+    fileHistory: light ? [] : fileHistory,
     // Detail payload only, read by /api/agent-context.
     agentContext: agentContextOf(agent, t, subs),
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
-    toolSequence: nestSubagentCalls(
-      mergeToolSequences(relativizeToolSequence(t?.toolSequence ?? [], startedAtMs), pluginCache.entries),
+    toolSequence: light ? [] : nestSubagentCalls(
+      // The hook's calls only stand in for a missing transcript: next to one they are all duplicates
+      // (a sub-agent's calls among them), which no timestamp match can tell apart.
+      t ? relativizeToolSequence(t.toolSequence ?? [], startedAtMs) : pluginCache.entries,
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
+        description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
         calls: relativizeToolSequence(sub.toolSequence ?? [], startedAtMs),
@@ -918,18 +1193,19 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     turns,
     ...(isLive
       ? {
-          liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: lastReply(mainTurns), lastTs, now }),
+          liveState: live.liveState ?? liveStateOf({ live, pending: t?.pendingCall, lastCall: t?.lastCall, lastText: t?.lastReplyText ?? lastReply(mainTurns), lastTs, now }),
           ...(live?.name ? { liveName: live.name } : {}),
+          ...(agent === "claude" && subs.length ? { liveSubagents: liveSubagentsOf(subs, now) } : {}),
         }
       : {}),
     runningTool: isLive && t?.runningTool
       ? { tool: t.runningTool.tool, preview: t.runningTool.preview, t: Math.max(0, (t.runningTool.tsMs ?? startedAtMs) - startedAtMs) }
       : null,
     lastEventAt: lastTs ? new Date(lastTs).toISOString() : undefined,
-    ...(pluginCache.entries.length
+    ...(pluginCache.count
       ? {
           pluginCapture: {
-            entries: pluginCache.entries.length,
+            entries: pluginCache.count,
             lastEventAt: new Date(pluginCache.lastTsMs).toISOString(),
             stoppedAt: pluginCache.stopTsMs ? new Date(pluginCache.stopTsMs).toISOString() : null,
           },
@@ -945,12 +1221,16 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
  */
 async function classifyLiveFiles() {
   const files = (await readDirSafe(LIVE_DIR)).filter((f) => f.endsWith(".json"));
-  const alive = [];
-  const deadIds = new Set();
+  const infos = [];
   for (const file of files) {
     const info = await readJsonSafe(join(LIVE_DIR, file));
-    if (!info || !info.sessionId) continue;
-    if (isClaudePidAlive(info.pid)) alive.push(file);
+    if (info && info.sessionId) infos.push({ file, info });
+  }
+  const running = claudePids(infos.map(({ info }) => info.pid));
+  const alive = [];
+  const deadIds = new Set();
+  for (const { file, info } of infos) {
+    if (running.has(info.pid)) alive.push(file);
     else deadIds.add(info.sessionId);
   }
   return { alive, deadIds };
@@ -1154,13 +1434,20 @@ function markUnpriced(s) {
  * errors (unreadable session-meta files), modelOverrides, readings (the
  * freshest Codex limits and Copilot quota the sessions logged, for
  * provider-limits.mjs) }. Used by scripts/api.mjs and by `pnpm parse`.
+ * With `light`, sessions leave out the detail view's fields: `sessionDetail`
+ * parses them when a session is opened.
  */
-export async function parseAllSessions() {
+export async function parseAllSessions({ light = false } = {}) {
+  readThisParse = new Set();
+  const read = { light };
+  const inputs = new Map();
   const modelOverrides = await loadModelOverrides();
   const codexIndex = await indexCodexRollouts();
   const copilotIndex = await indexCopilotSessions();
   const readings = { codex: null, copilot: null };
   if (!existsSync(PROJECTS_DIR) && !existsSync(META_DIR) && !existsSync(LIVE_DIR) && codexIndex.size === 0 && copilotIndex.size === 0) {
+    dropUnreadFiles();
+    buildInputs = inputs;
     return { sessions: [], errors: [], modelOverrides, readings };
   }
 
@@ -1176,45 +1463,52 @@ export async function parseAllSessions() {
   const errorList = [];
   for (const file of (await readDirSafe(META_DIR)).filter((f) => f.endsWith(".json"))) {
     const meta = await readJsonSafe(join(META_DIR, file));
-    if (!meta || !meta.session_id || !meta.start_time) { errorList.push(file); continue; }
+    if (!meta || !meta.session_id || !Number.isFinite(Date.parse(meta.start_time))) { errorList.push(file); continue; }
     const facet = facetsSet.has(file) ? await readJsonSafe(join(FACETS_DIR, file)) : null;
     metaById.set(meta.session_id, { meta, facet });
   }
 
   const now = Date.now();
   const all = [];
+  const copies = await copiedTurns(index, read);
   for (const id of new Set([...index.keys(), ...metaById.keys(), ...liveById.keys()])) {
-    const s = await buildSession(id, {
+    const input = {
       entry: index.get(id),
       meta: metaById.get(id)?.meta,
       facet: metaById.get(id)?.facet,
       live: liveById.get(id),
       dead: deadIds.has(id),
-      history,
-      now,
-    });
-    if (s) all.push(s);
+      copies: copies.get(id),
+    };
+    const s = await buildSessionSafe(id, { ...input, history, now, read });
+    if (!s) continue;
+    all.push(s);
+    inputs.set(id, input);
   }
   // Codex: an id already built from ~/.claude wins. Sub-agent rollouts are merged into their root.
   const built = new Set(all.map((s) => s.id));
   const codexParsed = new Map();
   for (const [id, entry] of codexIndex) {
     if (built.has(id)) continue;
-    const t = await readTranscriptFile(entry.path, { agent: "codex" });
+    const t = await readTranscriptFile(entry.path, { ...read, agent: "codex" });
     if (t) codexParsed.set(id, t);
   }
+  /** Root id → ids of the sub-agent rollouts merged into it. */
   const codexChildren = new Map();
   for (const id of codexParsed.keys()) {
     const root = codexRootOf(id, codexParsed);
-    if (root !== id) codexChildren.set(root, [...(codexChildren.get(root) ?? []), codexParsed.get(id)]);
+    if (root !== id) codexChildren.set(root, [...(codexChildren.get(root) ?? []), id]);
   }
   const codexRunning = codexParsed.size > 0 && isCodexRunning();
   for (const [id, t] of codexParsed) {
     if (codexRootOf(id, codexParsed) !== id) continue;
     const entry = codexIndex.get(id);
     const live = (await isCodexLive(entry.path, t, codexRunning, now)) ? { isLive: true, cwd: t.cwd } : undefined;
-    const s = await buildSession(id, { entry, live, dead: false, history, now, codexChildren: codexChildren.get(id) });
-    if (s) all.push(s);
+    const children = codexChildren.get(id) ?? [];
+    const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
+    if (!s) continue;
+    all.push(s);
+    inputs.set(id, { entry, live, dead: false, codexChildEntries: children.map((c) => codexIndex.get(c)) });
   }
   readings.codex = freshest(codexParsed.values(), "rateLimits");
 
@@ -1225,13 +1519,15 @@ export async function parseAllSessions() {
     const copilotParsed = [];
     for (const [id, entry] of copilotIndex) {
       if (built.has(id)) continue;
-      const t = await readTranscriptFile(entry.path, { agent: "copilot" });
+      const t = await readTranscriptFile(entry.path, { ...read, agent: "copilot" });
       if (!t) continue;
       copilotParsed.push(t);
       const isLive = entry.pids.some((pid) => pids.has(pid));
       const live = isLive ? { isLive: true, cwd: entry.cwd ?? t.cwd, liveState: copilotLiveState(t, open.get(id), now) } : undefined;
-      const s = await buildSession(id, { entry, live, dead: false, history, now });
-      if (s) all.push(s);
+      const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read });
+      if (!s) continue;
+      all.push(s);
+      inputs.set(id, { entry, live, dead: false });
     }
     readings.copilot = freshest(copilotParsed, "quota");
   }
@@ -1241,13 +1537,59 @@ export async function parseAllSessions() {
   reassignLiveToChainTail(all);
   for (const s of all) markUnpriced(s);
   await applyContextWindows(all);
+  dropUnreadFiles();
+  buildInputs = inputs;
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
 }
 
+const warned = new Set();
+/** Each problem is logged once per server run, not on every parse. */
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(message);
+}
+
+/** A session that fails to build (a record the parser doesn't expect) is left out, not the whole parse. */
+async function buildSessionSafe(id, opts) {
+  try {
+    return await buildSession(id, opts);
+  } catch (err) {
+    warnOnce(id, `[marey] skipped session ${id}: ${err.message}`);
+    return null;
+  }
+}
+
+/** What the last parse built each session from, for `sessionDetail`. */
+let buildInputs = new Map();
+
+/** The fields light sessions leave out (`parseAllSessions({ light: true })`). */
+const DETAIL_FIELDS = ["prompts", "toolSequence", "turns", "timeline", "fileHistory"];
+
+/**
+ * A session from the last parse with its detail view's fields, parsed again from its files and
+ * kept by nobody. The rest (live state, chains, context window) stays as the parse left it.
+ */
+export async function sessionDetail(session) {
+  const input = buildInputs.get(session.id);
+  if (!input) return session;
+  const read = { cached: false };
+  const codexChildren = [];
+  for (const entry of input.codexChildEntries ?? []) {
+    const t = await readTranscriptFile(entry.path, { ...read, agent: "codex" });
+    if (t) codexChildren.push(t);
+  }
+  const full = await buildSession(session.id, { ...input, history: new Map(), now: Date.now(), codexChildren, read });
+  if (!full) return session;
+  const detail = { ...session };
+  for (const key of DETAIL_FIELDS) detail[key] = full[key];
+  return detail;
+}
+
 /**
  * Strip heavy fields from a Session to produce a lightweight summary suitable
- * for the session list / sidebar. Detail views (`getSessionById`) hand back the
+ * for the session list / sidebar. Detail views (`sessionDetail`) hand back the
  * full object.
  */
 export function summarizeSession(s) {
@@ -1284,6 +1626,7 @@ export function summarizeSession(s) {
     runningTool: s.runningTool ?? null,
     liveState: s.liveState ?? null,
     liveName: s.liveName,
+    liveSubagents: s.liveSubagents,
     version: s.version,
     contextWindow: s.contextWindow,
     aiCredits: s.aiCredits,

@@ -5,8 +5,6 @@
  * Claude Code and Codex sessions alike. Read-only. See ARCHITECTURE.md.
  */
 import { readdir, readFile, stat as fspStat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { execFile, execFileSync } from "node:child_process";
@@ -19,6 +17,7 @@ import {
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
+  jsonlLines,
   longestRun,
   toolKey,
 } from "./transcript-utils.mjs";
@@ -203,6 +202,8 @@ export async function parseCodexRollout(path) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const resultById = new Map();
@@ -252,6 +253,7 @@ export async function parseCodexRollout(path) {
     pending.inPreview = text.slice(0, 200);
     absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
     if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+    else promptsCutAt ??= tsMs;
   };
 
   const toolInput = (p) => {
@@ -437,8 +439,7 @@ export async function parseCodexRollout(path) {
     pending = { tools: [], inBytes: 0, inPreview: "", outBytes: 0, outPreview: "" };
   };
 
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  for await (const line of rl) {
+  for await (const line of jsonlLines(path)) {
     if (!line.trim()) continue;
     const j = parseJson(line);
     if (!j) continue;
@@ -572,6 +573,7 @@ export async function parseCodexRollout(path) {
     toolCounts,
     absEvents,
     prompts,
+    promptsCutAt,
     toolSequence,
     turns,
     assistantMessages: turns.length,

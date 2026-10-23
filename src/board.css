@@ -50,6 +50,41 @@
 }
 .board-open:hover { color: var(--c-cyan); border-color: color-mix(in srgb, var(--c-cyan) 55%, transparent); }
 
+/* A session's sub-agents at work, under its row: the same columns, the task over the middle ones */
+.board-subs { padding: 0 12px 8px; }
+.board-subs-head { padding-left: 14px; font-size: var(--fs-sm); color: var(--c-text-dim); }
+.board-group .board-subs li { border-top: none; }
+.board-sub {
+  display: grid;
+  grid-template-columns: minmax(120px, 190px) minmax(90px, 170px) minmax(0, 1fr) 104px 56px 112px;
+  align-items: baseline;
+  gap: 14px;
+  /* the row's columns, with room around them for the hover */
+  margin-inline: -12px;
+  padding: 3px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.board-sub:hover, .board-sub:focus-visible { background: var(--c-bg-hover); outline: none; }
+.board-sub-name { position: relative; padding-left: 14px; color: var(--c-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-sub-name::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.5em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-green);
+}
+.board-sub-task { grid-column: 2 / 5; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-width: 0; }
+.board-sub-desc { color: var(--c-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-sub-call { color: var(--c-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-sub-since { grid-column: 5; justify-self: end; color: var(--c-text-dim); white-space: nowrap; }
+.board-subs-more { margin-left: 14px; font-size: var(--fs-sm); color: var(--c-text-dim); }
+.board-subs-more:hover { color: var(--c-cyan); }
+
 @media (max-width: 720px) {
   .board-row { grid-template-columns: 1fr auto; gap: 2px 10px; }
   .board-name { grid-column: 1; }
@@ -58,4 +93,7 @@
   .board-line { grid-column: 1 / -1; white-space: normal; }
   .board-usage { grid-column: 1 / -1; justify-self: start; }
   .board-open { grid-column: 1 / -1; justify-self: start; margin-top: 4px; }
+  .board-sub { grid-template-columns: 1fr auto; gap: 0 10px; }
+  .board-sub-since { grid-column: 2; grid-row: 1; }
+  .board-sub-task { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr); gap: 0; padding-left: 14px; }
 }

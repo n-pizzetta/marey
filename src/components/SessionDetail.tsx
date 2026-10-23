@@ -6,8 +6,8 @@ import { FrictionsCard, SessionKpis, TabPreviews, type OverviewLink } from "./Se
 import { KpiRow } from "./Kpi";
 import { freshTokens, useUnit, type Unit } from "../utils/units";
 import { promptWeights } from "../utils/promptShare";
-import { projectColor } from "../utils/fleetStats";
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { cacheHit, inputTokens, projectColor } from "../utils/fleetStats";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createPatch } from "diff";
 import type { Session, SessionQuality, ToolCall, ToolName } from "../types";
 import { callsBetween, callsPerPrompt, countCalls, countFailed, countSubCalls, flattenCalls, onlyFailed } from "../utils/toolCalls";
@@ -15,7 +15,8 @@ import { estimateHint, formatBytes, formatClockAt, formatCost, formatDuration, f
 import { SESSION_IDLE_GAP_MS } from "../utils/fleetStats";
 import { downloadSessionHtml } from "../utils/exportSession";
 import { classifyPrompt, PROMPT_KIND_COLOR, PROMPT_KIND_LABEL } from "../utils/classifyPrompt";
-import { costOf, modelLabel, priceFor, type CostTokens, type ModelPrice } from "../../scripts/models.mjs";
+import { costOf, modelLabel, priceFor, type CostTokens } from "../../scripts/models.mjs";
+import { addKindCost, costPerKind, sessionCostPerKind, ZERO_KIND_COST, type KindCost } from "../utils/costPerKind";
 import { toastError } from "../utils/toast";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { keepFocus } from "../utils/keepFocus";
@@ -106,7 +107,12 @@ function QualityChip({ quality }: { quality: SessionQuality }) {
     const onClick = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't let App's Escape handler close the session view as well.
+      e.stopPropagation();
+      setOpen(false);
+    };
     window.addEventListener("scroll", updatePos, true);
     window.addEventListener("resize", updatePos);
     document.addEventListener("mousedown", onClick);
@@ -196,6 +202,8 @@ interface Props {
   hasNext?: boolean;
   position?: number;
   total?: number;
+  /** Open on the Tools tab, with the calls of this sub-agent (its id) shown. */
+  focusSubagent?: string | null;
 }
 
 type Tab = "overview" | "timeline" | "tools" | "tokens" | "files";
@@ -243,8 +251,21 @@ export function SessionDetail({
   hasNext = false,
   position,
   total,
+  focusSubagent = null,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(focusSubagent ? "tools" : "overview");
+  // One scroll for the whole view: the header scrolls away under the tabs, which stay on top.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  // past the header, another tab starts at its top, right under the tabs
+  const showTab = (to: Tab) => {
+    setTab(to);
+    const root = rootRef.current;
+    const top = topRef.current;
+    if (!root || !top) return;
+    const below = top.offsetTop + top.offsetHeight;
+    if (root.scrollTop > below) root.scrollTop = below;
+  };
   const [toolFocus, setToolFocus] = useState<{ promptIdx: number; start: number; end: number } | null>(null);
   // a link from the Overview into the Tokens tab, consumed once it has scrolled there
   const [tokensFocus, setTokensFocus] = useState<TokensFocus | null>(null);
@@ -279,22 +300,22 @@ export function SessionDetail({
 
   const focusToolsForPrompt = (promptIdx: number, start: number, end: number) => {
     setToolFocus({ promptIdx, start, end });
-    setTab("tools");
+    showTab("tools");
   };
   // the Overview's summaries open their tab; the API value one lands on Tokens › By kind
   const openFromOverview = (to: OverviewLink) => {
     if (to === "tokens") setTokensFocus({ section: "kind" });
     if (to === "tools") setToolFocus(null);
-    setTab(to);
+    showTab(to);
   };
   const openPromptCost = (idx: number) => {
     setTokensFocus({ section: "prompt", idx });
-    setTab("tokens");
+    showTab("tokens");
   };
 
   return (
-    <div className={`detail ${fullscreen ? "fullscreen" : ""}`} key={session.id}>
-      <div className="detail-sticky">
+    <div className={`detail ${fullscreen ? "fullscreen" : ""}`} key={session.id} ref={rootRef}>
+      <div className="detail-top" ref={topRef}>
         <div className="detail-toolbar">
           <div className="detail-nav">
             <button
@@ -389,7 +410,7 @@ export function SessionDetail({
             <div className="goal">{session.goal}</div>
             {/* on the title's first line, right-aligned: the context figures and verdict, then the primary action */}
             <div className="goal-actions">
-              <SessionContext sessionId={session.id} />
+              <SessionContext session={session} />
               {canOpenTerminal(session) ? (
                 <button className="resume-btn" onClick={openSessionTerminal} disabled={opening} title="Bring the terminal running this session to the front">
                   {opening ? "Opening…" : "Open terminal"}
@@ -408,14 +429,16 @@ export function SessionDetail({
           <ClearedBanner session={session} />
         )}
         {session.ghost && <GhostBanner session={session} />}
+      </div>
 
+      <div className="detail-tabs-bar">
         <div className="tabs">
           {TABS.map((t) => (
             <button
               key={t.id}
               className={`tab ${tab === t.id ? "active" : ""}`}
               onMouseDown={keepFocus}
-              onClick={() => setTab(t.id)}
+              onClick={() => showTab(t.id)}
             >
               <svg className="tab-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
                 {t.icon}
@@ -439,7 +462,7 @@ export function SessionDetail({
         )}
         {tab === "timeline" && <TimelineTab session={session} onFocusTools={focusToolsForPrompt} />}
         {tab === "tools" && (
-          <ToolsTab session={session} focus={toolFocus} onClearFocus={() => setToolFocus(null)} />
+          <ToolsTab session={session} focus={toolFocus} onClearFocus={() => setToolFocus(null)} focusSubagent={focusSubagent} />
         )}
         {tab === "tokens" && <TokensTab session={session} focus={tokensFocus} onFocusDone={clearTokensFocus} />}
         {tab === "files" && <FilesTab session={session} />}
@@ -536,10 +559,10 @@ function GhostBanner({ session }: { session: Session }) {
     }
   };
 
-  const deletePermanently = async () => {
+  const deleteGhost = async () => {
     if (!confirm(
-      "Delete this ghost session permanently?\n\n" +
-        "This removes the transcript jsonl and its stale live file. Cannot be undone.",
+      "Delete this ghost session?\n\n" +
+        "Moves the transcript jsonl and its sub-agents to ~/.claude/marey/trash/ (kept 30 days) and removes its stale live file.",
     )) return;
     setBusy(true);
     try {
@@ -599,8 +622,8 @@ function GhostBanner({ session }: { session: Session }) {
         <button className="ghost-action" onClick={openTranscript} disabled={busy}>
           Reveal transcript
         </button>
-        <button className="ghost-action danger" onClick={deletePermanently} disabled={busy}>
-          {busy ? "Deleting…" : "Delete permanently"}
+        <button className="ghost-action danger" onClick={deleteGhost} disabled={busy}>
+          {busy ? "Deleting…" : "Move to trash"}
         </button>
       </div>
     </div>
@@ -727,7 +750,7 @@ function OverviewTab({
           })()}
           {sel !== null && (() => {
             const p = prompts[sel];
-            const kind = classifyPrompt(p.text);
+            const kind = classifyPrompt(p.text ?? p.preview);
             const tc = promptTools[sel];
             const w = weights[sel];
             return (
@@ -757,7 +780,7 @@ function OverviewTab({
                     </button>
                   )}
                 </div>
-                <pre className="prompt-panel-body">{p.text}</pre>
+                <pre className="prompt-panel-body">{p.text ?? p.preview}</pre>
               </div>
             );
           })()}
@@ -785,12 +808,22 @@ function ToolsTab({
   session,
   focus,
   onClearFocus,
+  focusSubagent,
 }: {
   session: Session;
   focus: { promptIdx: number; start: number; end: number } | null;
   onClearFocus: () => void;
+  /** A sub-agent picked on Now: the call that started it opens onto its calls, scrolled into view once. */
+  focusSubagent: string | null;
 }) {
   const [failedOnly, setFailedOnly] = useState(false);
+  const focusRef = useRef<HTMLDivElement>(null);
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusSubagent || scrolledTo.current === focusSubagent || !focusRef.current) return;
+    focusRef.current.scrollIntoView({ block: "start" });
+    scrolledTo.current = focusSubagent;
+  });
   const sortedTools = (Object.entries(session.toolCounts) as Array<[ToolName, number]>)
     .filter(([, v]) => v > 0)
     .sort(([, a], [, b]) => b - a);
@@ -804,6 +837,9 @@ function ToolsTab({
   // newest first; the newest call of a live session may still be running
   const sequence = [...shown].reverse();
   const truncated = all.length >= 300;
+  // Capture stops at 300 calls: say so where the calls shown run past the last one captured.
+  const lastCaptured = all.length ? all[all.length - 1].t : 0;
+  const pastCap = truncated && (!focus || focus.end > lastCaptured);
 
   // the calls in order on the left; their count per tool in a card on the right (above it on narrow screens)
   return (
@@ -846,19 +882,27 @@ function ToolsTab({
             </div>
           )}
           {sequence.length === 0 ? (
-            <div className="placeholder">No tool sequence available. The By tool card has the counts.</div>
+            <div className="placeholder">
+              {focus && pastCap && focus.start >= lastCaptured
+                ? "This prompt's calls come after the first 300, the only ones captured. The By tool card counts them all."
+                : "No tool sequence available. The By tool card has the counts."}
+            </div>
           ) : (
             <div className="tool-sequence">
-              {sequence.map((s, i) => (
-                <ToolSeqRow
-                  key={`${s.t}-${i}`}
-                  entry={s}
-                  startedAt={session.startedAt}
-                  pending={!!session.live && i === 0 && !s.result && !s.orphan && !failedOnly}
-                  openSub={failedOnly}
-                />
-              ))}
-              {truncated && (
+              {sequence.map((s, i) => {
+                const picked = !!focusSubagent && s.subagentId === focusSubagent;
+                return (
+                  <ToolSeqRow
+                    key={`${s.t}-${i}`}
+                    entry={s}
+                    startedAt={session.startedAt}
+                    pending={!!session.live && i === 0 && !s.result && !s.orphan && !failedOnly}
+                    openSub={failedOnly || picked}
+                    rowRef={picked ? focusRef : undefined}
+                  />
+                );
+              })}
+              {pastCap && (
                 <div className="mono dim" style={{ padding: "8px 10px", fontSize: "var(--fs-sm)" }}>
                   (later tool calls truncated — showing the first 300 of each transcript)
                 </div>
@@ -898,12 +942,15 @@ function ToolSeqRow({
   startedAt,
   pending,
   openSub = false,
+  rowRef,
 }: {
   entry: ToolCall;
   startedAt: string;
   pending?: boolean;
-  /** Start with the sub-agent's calls shown (the failed-only view). */
+  /** Start with the sub-agent's calls shown (the failed-only view, a sub-agent picked on Now). */
   openSub?: boolean;
+  /** Set on the row of a sub-agent picked on Now. */
+  rowRef?: Ref<HTMLDivElement>;
 }) {
   const [open, setOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(openSub);
@@ -918,7 +965,7 @@ function ToolSeqRow({
   // newest first, like the calls around them; the newest one runs while its sub-agent does
   const kidsShown = [...kids].reverse();
   return (
-    <div className={`tool-seq-row ${expandable ? "has-result" : ""} ${open ? "open" : ""} ${pending ? "pending" : ""} ${entry.orphan ? "orphan" : ""}`}>
+    <div ref={rowRef} className={`tool-seq-row ${expandable ? "has-result" : ""} ${open ? "open" : ""} ${pending ? "pending" : ""} ${entry.orphan ? "orphan" : ""} ${rowRef ? "picked" : ""}`}>
       <button
         className="tool-seq-main"
         onClick={() => expandable && setOpen((v) => !v)}
@@ -980,36 +1027,6 @@ function ToolSeqRow({
   );
 }
 
-/** Cache writes at the 5-minute rate, except the 1-hour share (2x input) when known. */
-function cacheWriteCost(p: ModelPrice, t: { cacheWrite: number; cacheWrite1h?: number }) {
-  const oneHour = Math.min(t.cacheWrite, t.cacheWrite1h ?? 0);
-  return ((t.cacheWrite - oneHour) * p.cacheWrite + oneHour * p.cacheWrite1h) / 1e6;
-}
-
-function costPerKind(model: string, tokens: Session["tokens"]) {
-  const p = priceFor(model);
-  return {
-    input: (tokens.input / 1e6) * p.in,
-    output: (tokens.output / 1e6) * p.out,
-    cacheRead: (tokens.cacheRead / 1e6) * p.cacheRead,
-    cacheWrite: cacheWriteCost(p, tokens),
-  };
-}
-
-/** Per-kind cost priced turn by turn with each turn's model, so it adds up to costUsd. */
-function sessionCostPerKind(session: Session) {
-  if (!session.turns?.length) return costPerKind(session.model, session.tokens);
-  const out = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  for (const t of session.turns) {
-    const c = costPerKind(t.model ?? session.model, t.tokens);
-    out.input += c.input;
-    out.output += c.output;
-    out.cacheRead += c.cacheRead;
-    out.cacheWrite += c.cacheWrite;
-  }
-  return out;
-}
-
 const ratio = (n: number) => `${Number(n.toFixed(3))}×`;
 
 /** Token-kind explanations with this model's actual price ratios (scripts/models.mjs). */
@@ -1044,7 +1061,12 @@ function InfoDot({ title }: { title: string }) {
     const onClick = (e: MouseEvent) => {
       if (!btnRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't let App's Escape handler close the session view as well.
+      e.stopPropagation();
+      setOpen(false);
+    };
     window.addEventListener("scroll", updatePos, true);
     window.addEventListener("resize", updatePos);
     document.addEventListener("mousedown", onClick);
@@ -1099,9 +1121,7 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
   const savings = Math.max(0, baseline - totalCost);
   const savingsPct = baseline > 0 ? (savings / baseline) * 100 : 0;
 
-  const cacheHit = session.tokens.input + session.tokens.cacheRead > 0
-    ? session.tokens.cacheRead / (session.tokens.input + session.tokens.cacheRead)
-    : 0;
+  const hit = cacheHit(session.tokens);
   const promptCount = session.prompts?.length ?? 0;
   const costPerPrompt = promptCount > 0 ? totalCost / promptCount : 0;
 
@@ -1114,7 +1134,7 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
   ];
 
   const pct = (v: number, t: number) => (t > 0 ? (v / t) * 100 : 0);
-  const hitTone = cacheHit >= 0.9 ? "green" : cacheHit >= 0.4 ? undefined : "red";
+  const hitTone = hit >= 0.9 ? "green" : hit >= 0.4 ? undefined : "red";
   const estimated = session.unpricedModels?.length ? "~" : "";
 
   // a link from the Overview to By kind: scroll there, once (a link to a prompt is By prompt's to handle)
@@ -1137,10 +1157,10 @@ function TokensTab({ session, focus, onFocusDone }: { session: Session; focus: T
           },
           {
             label: "Cache hit",
-            value: `${(cacheHit * 100).toFixed(1)}%`,
-            sub: `${formatTokens(session.tokens.cacheRead)} of ${formatTokens(session.tokens.input + session.tokens.cacheRead)} input tokens`,
+            value: `${(hit * 100).toFixed(1)}%`,
+            sub: `${formatTokens(session.tokens.cacheRead)} of ${formatTokens(inputTokens(session.tokens))} input tokens`,
             tone: hitTone,
-            title: "cacheRead / (cacheRead + input): input served from the prompt cache instead of billed fresh. Aim for 90% or more.",
+            title: "cacheRead / (input + cacheRead + cacheWrite): input served from the prompt cache instead of read fresh (a cache write is read fresh too). Aim for 90% or more.",
           },
           {
             label: "Cache savings",
@@ -1309,7 +1329,7 @@ function TokensByPrompt({ session, unit, openIdx, onOpened }: { session: Session
               {isOpen && (
                 <div className="prompt-panel">
                   <PromptCostBreakdown s={s} model={session.model} />
-                  {p && <pre className="prompt-panel-body">{p.text}</pre>}
+                  {p && <pre className="prompt-panel-body">{p.text ?? p.preview}</pre>}
                 </div>
               )}
             </Fragment>
@@ -1336,6 +1356,8 @@ type PromptStats = {
   turnCount: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite5m: number; cacheWrite1h: number };
   cost: number;
+  /** `cost` per token kind, priced turn by turn like it. */
+  kindCost: KindCost;
   tools: string[];
   dominantKind: "input" | "output" | "cacheRead" | "cacheWrite";
   gapBeforeMs: number;
@@ -1374,6 +1396,7 @@ function aggregateByPrompt(
     turnCount: 0,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
     cost: 0,
+    kindCost: ZERO_KIND_COST,
     tools: [],
     dominantKind: "input",
     gapBeforeMs: 0,
@@ -1393,6 +1416,7 @@ function aggregateByPrompt(
     s.tokens.cacheWrite5m += tn.tokens.cacheWrite5m ?? 0;
     s.tokens.cacheWrite1h += tn.tokens.cacheWrite1h ?? 0;
     s.cost += turnCost(tn.model ?? model, tn.tokens);
+    s.kindCost = addKindCost(s.kindCost, costPerKind(tn.model ?? model, tn.tokens));
     for (const t of tn.tools) s.tools.push(t);
     const prevT = prevTurnTByPrompt[tn.promptIdx] >= 0 ? prevTurnTByPrompt[tn.promptIdx] : s.t;
     s.turnDetails.push({
@@ -1415,13 +1439,7 @@ function aggregateByPrompt(
   }
   for (let i = 0; i < stats.length; i++) {
     const s = stats[i];
-    const p = priceFor(model);
-    const contrib = {
-      input: (s.tokens.input / 1e6) * p.in,
-      output: (s.tokens.output / 1e6) * p.out,
-      cacheRead: (s.tokens.cacheRead / 1e6) * p.cacheRead,
-      cacheWrite: cacheWriteCost(p, s.tokens),
-    } as const;
+    const contrib = s.kindCost;
     let max: PromptStats["dominantKind"] = "output";
     let maxV = -1;
     for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const) {
@@ -1464,12 +1482,13 @@ const KIND_LABEL: Record<PromptStats["dominantKind"], string> = {
 };
 
 function PromptCostBreakdown({ s, model }: { s: PromptStats; model: string }) {
+  // the costs come per turn (`kindCost`); the notes quote the session model's price ratios
   const pr = priceFor(model);
   const rows: Array<{ key: "input" | "output" | "cacheRead" | "cacheWrite"; label: string; cls: string; val: number; cost: number }> = [
-    { key: "input",      label: "input",  cls: "input",       val: s.tokens.input,      cost: (s.tokens.input / 1e6) * pr.in },
-    { key: "output",     label: "output", cls: "output",      val: s.tokens.output,     cost: (s.tokens.output / 1e6) * pr.out },
-    { key: "cacheRead",  label: "cache read", cls: "cache-read",  val: s.tokens.cacheRead,  cost: (s.tokens.cacheRead / 1e6) * pr.cacheRead },
-    { key: "cacheWrite", label: "cache write", cls: "cache-write", val: s.tokens.cacheWrite, cost: cacheWriteCost(pr, s.tokens) },
+    { key: "input",      label: "input",  cls: "input",       val: s.tokens.input,      cost: s.kindCost.input },
+    { key: "output",     label: "output", cls: "output",      val: s.tokens.output,     cost: s.kindCost.output },
+    { key: "cacheRead",  label: "cache read", cls: "cache-read",  val: s.tokens.cacheRead,  cost: s.kindCost.cacheRead },
+    { key: "cacheWrite", label: "cache write", cls: "cache-write", val: s.tokens.cacheWrite, cost: s.kindCost.cacheWrite },
   ];
   return (
     <div className="prompt-cost-panel-body">
@@ -1731,6 +1750,8 @@ function FileEntry({
   }, [open, sessionId, hash, versions, contents]);
 
   const firstPreview = contents?.[versions[0]]?.split("\n").find((l) => l.trim()) ?? "";
+  // A version that didn't load (backup gone, server down) is said so, not shown as an empty file.
+  const missing = contents ? versions.filter((v) => !(v in contents)) : [];
 
   const basename = path ? path.split("/").pop() ?? path : null;
   const dirPath = path && basename ? path.slice(0, -basename.length).replace(/\/$/, "") : null;
@@ -1752,7 +1773,13 @@ function FileEntry({
       {open && (
         <div className="file-body">
           {loading && <div className="mono dim" style={{ padding: 10 }}>loading…</div>}
-          {!loading && versions.length === 1 && (
+          {missing.length > 0 && (
+            <div className="mono dim" style={{ padding: 10 }}>
+              Could not load {missing.map((v) => `v${v}`).join(", ")}: {missing.length > 1 ? "their backups" : "its backup"} may be gone.{" "}
+              <button className="link-btn" onClick={() => setContents(null)}>Retry</button>
+            </div>
+          )}
+          {!loading && versions.length === 1 && !missing.length && (
             <div className="mono dim" style={{ padding: 10 }}>
               Single version. No diff to render.
               <pre className="file-raw">{(contents?.[versions[0]] ?? "").slice(0, 4000)}</pre>
@@ -1761,6 +1788,7 @@ function FileEntry({
           {!loading && versions.length > 1 &&
             versions.slice(0, -1).map((v, i) => {
               const next = versions[i + 1];
+              if (missing.includes(v) || missing.includes(next)) return null;
               const a = contents?.[v] ?? "";
               const b = contents?.[next] ?? "";
               const patch = createPatch(`${hash}@v${next}`, a, b, `v${v}`, `v${next}`, { context: 2 });

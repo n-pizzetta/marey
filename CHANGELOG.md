@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A session that had ended kept its context line in the list (`ctx 19% · cache cold · Clear if the task is done`) for up to 6 hours. The line, its cache countdown and its advice now only show while a session runs, for Claude Code, Codex and Copilot CLI alike; an ended session's view keeps only its last context, labelled as such.
+- Escape in a popover of the session view (the quality chip, an ⓘ, the context verdict) also closed the session.
+- A failed poll (a server restart) swapped the sessions for demo data and closed the open session. The last sessions now stay, and the settings menu says the server stopped answering.
+- Export did nothing while a session's details were loading or after they failed to load. It now loads the full session first.
+- ↑ / ↓ / j / k could skip a session when a poll reordered the list (sorted by usage or active time).
+- A file version that could not be loaded showed as an empty file, or its diff as a whole new file. It is now named, with a retry.
+- Focused on a prompt past the first 300 calls, the Tools tab said "No tool sequence available".
+- With sessions in range but none matching the filters, the empty state said to try a broader range.
+- Older models (Opus 4, 4.1 and 4.5, Sonnet 4 and 4.5, Haiku 3.5, `claude-3-*` ids) were priced at another model's rate. Haiku 5.5 cost 10 times its price; its requests over 100k prompt tokens now pay its long-prompt rate. Sonnet 5.5 cache reads cost $0.10, not $0.20.
+- Sessions that switch models (sub-agents on Haiku, say) had their cache savings, the usage chart's API value, the per-prompt cost breakdown and the overview's split by kind priced with a single model.
+- One malformed record in a transcript or a session-meta file stopped every parse and froze the dashboard.
+- With the capture hook, a session's tool calls could show twice.
+- Turns after a session's 100th prompt all counted in the 100th. A renamed session kept its first title, and `/clear` chains missed titles set late in a transcript.
+- An open running session's API value, prompts and calls froze when it was opened, and it still read "in progress" once it had ended.
+- The spike analysis only searched the sessions left by the Sessions filters, dropped the prompt still running, and three of its checks never fired.
+- On Usage, a session started before the range brought all its tool calls, active time and prompts, and the chart's bars didn't start on the hour or at midnight.
+- When `settings.json` pointed at Marey's status line through another spelling of its path (a symlinked config folder, `~`), the status line ran itself in a loop, spawning processes without end. `/marey:limits` now recognizes it however its path is written, the wrapper never runs itself twice, and a previous status line that hangs is stopped after 3 seconds.
+- `/marey:limits` replaced a symlinked `~/.claude/settings.json` with a plain file and reset its permissions. It now writes through the link and keeps them.
+- The plugin hook could keep running after a tool call until Claude Code closed its input; it now exits within 1.5 s. Its cache folder, the usage limits and the live context snapshots are now readable by your user only.
+- An insights report that couldn't be read, or a dashboard file removed while being served, crashed the server. It now answers with an error.
+- On Windows, "Reveal transcript" said it could not open the file even when Explorer had opened it.
+- Deleting a ghost session could remove for good one resumed since the last refresh. It is now checked again first, and kept if its Claude Code runs or it was written in the last 10 minutes; a bulk delete skips those and says why. Deleted ghosts go to `~/.claude/marey/trash/` for 30 days.
+- A Claude Code session running as another user (under `sudo`) could be shown as crashed.
+- Messages copied into another transcript counted twice: a background fork's copy of its session, and the conversation an aside question or a compaction sub-agent starts from (about 3% of tokens on a real `~/.claude`). Each message now counts once, in the transcript it was written in.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -18,6 +45,40 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.13.0] — 2026-10-22
+
+### Added
+
+- On Now, a running Claude Code session lists its sub-agents at work under its row: name, task, last call and how long each has run, and how many are done. Click one to see its calls.
+
+### Changed
+
+- In a session, the header scrolls away and the tabs stay on top, leaving the room below them to the tab.
+
+### Fixed
+
+- In a long session's Tools tab, a sub-agent's calls could sit under the call that started another sub-agent.
+
+## [0.12.1] — 2026-10-22
+
+### Fixed
+
+- The cache hit of Claude Code and Copilot CLI sessions read about 100%: it now counts cache writes, input read fresh to fill the cache, as misses.
+
+## [0.12.0] — 2026-10-21
+
+### Changed
+
+- The server stops re-reading your sessions while no dashboard tab is visible, and catches up as soon as one is.
+- The server uses about ten times less memory: it keeps a light copy of each session and reads a session's calls, prompts and timeline when you open it.
+- Each refresh does less: the plugin hook's capture files are read again only when they change, and running sessions are checked with one `ps` instead of one per session.
+- A refresh reads only the lines appended to a Claude Code transcript that is being written, instead of the whole file again.
+
+### Fixed
+
+- The server forgets the transcripts that were deleted instead of keeping them in memory until it stops.
+- Lines that hold the characters U+2028 or U+2029 were skipped in Claude Code transcripts, Codex rollouts, Copilot CLI sessions and the plugin hook's captures, with their tokens, calls and results.
 
 ## [0.11.2] — 2026-10-15
 

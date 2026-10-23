@@ -7,12 +7,11 @@ import {
   rangeBoundsMs,
   topProjectsByTokens,
   sumTokens,
-  costOfTokens,
   PROJECT_PALETTE,
   OTHER_COLOR,
+  type BucketCell,
 } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
-import { DEFAULT_MODEL } from "../../../scripts/models.mjs";
 
 interface Props {
   sessions: Session[];
@@ -20,6 +19,9 @@ interface Props {
 }
 
 type Axis = "tokens" | "cost";
+
+/** A bar segment's height: its tokens, or their API value (priced per turn when bucketed). */
+const cellValue = (axis: Axis, cell: BucketCell) => (axis === "tokens" ? sumTokens(cell) : cell.cost);
 
 /** Fewest buckets drawn once the empty start of the range is cut. */
 const MIN_BUCKETS = 12;
@@ -35,28 +37,12 @@ export function TokenTimeSeries({ sessions, range }: Props) {
   const [axis, setAxis] = useState<Axis>("tokens");
   const [hover, setHover] = useState<number | null>(null);
 
-  const { buckets, projects, colorFor, maxTotal, modelForProject } = useMemo(() => {
+  const { buckets, projects, colorFor, maxTotal } = useMemo(() => {
     const top = topProjectsByTokens(sessions, 5);
     const projects = [...top, "other"];
     const colorFor = new Map<string, string>();
     top.forEach((p, i) => colorFor.set(p, PROJECT_PALETTE[i] ?? "var(--c-text-dim)"));
     colorFor.set("other", OTHER_COLOR);
-
-    // Use a default model per project (majority) for cost calc from bucketed tokens
-    const modelCount = new Map<string, Map<string, number>>();
-    for (const s of sessions) {
-      const proj = s.project || "unknown";
-      const m = modelCount.get(proj) ?? new Map<string, number>();
-      m.set(s.model, (m.get(s.model) ?? 0) + sumTokens(s.tokens));
-      modelCount.set(proj, m);
-    }
-    const modelForProject = new Map<string, string>();
-    for (const [proj, counts] of modelCount.entries()) {
-      let best = DEFAULT_MODEL;
-      let bestN = -1;
-      for (const [m, n] of counts.entries()) if (n > bestN) { best = m; bestN = n; }
-      modelForProject.set(proj, best);
-    }
 
     const { fromMs, toMs } = rangeBoundsMs(sessions, range);
     const allBuckets = bucketizeByProject(sessions, range, fromMs, toMs);
@@ -67,8 +53,8 @@ export function TokenTimeSeries({ sessions, range }: Props) {
 
     // Collapse non-top projects into "other"
     const collapsed = rawBuckets.map((b) => {
-      const byProject = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>();
-      const other = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const byProject = new Map<string, BucketCell>();
+      const other: BucketCell = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
       for (const [proj, tb] of b.byProject.entries()) {
         if (top.includes(proj)) byProject.set(proj, tb);
         else {
@@ -76,6 +62,7 @@ export function TokenTimeSeries({ sessions, range }: Props) {
           other.output += tb.output;
           other.cacheRead += tb.cacheRead;
           other.cacheWrite += tb.cacheWrite;
+          other.cost += tb.cost;
         }
       }
       if (sumTokens(other) > 0) byProject.set("other", other);
@@ -85,16 +72,11 @@ export function TokenTimeSeries({ sessions, range }: Props) {
     let maxTotal = 0;
     for (const b of collapsed) {
       let total = 0;
-      for (const [proj, tb] of b.byProject.entries()) {
-        const v = axis === "tokens"
-          ? sumTokens(tb)
-          : costOfTokens(modelForProject.get(proj) ?? DEFAULT_MODEL, tb);
-        total += v;
-      }
+      for (const tb of b.byProject.values()) total += cellValue(axis, tb);
       if (total > maxTotal) maxTotal = total;
     }
 
-    return { buckets: collapsed, projects, colorFor, maxTotal, modelForProject };
+    return { buckets: collapsed, projects, colorFor, maxTotal };
   }, [sessions, range, axis]);
 
   if (buckets.length === 0 || maxTotal === 0) {
@@ -147,9 +129,7 @@ export function TokenTimeSeries({ sessions, range }: Props) {
                 {projects.map((proj) => {
                   const tb = b.byProject.get(proj);
                   if (!tb) return null;
-                  const v = axis === "tokens"
-                    ? sumTokens(tb)
-                    : costOfTokens(modelForProject.get(proj) ?? DEFAULT_MODEL, tb);
+                  const v = cellValue(axis, tb);
                   if (v <= 0) return null;
                   const h = (v / maxTotal) * plotH;
                   const y = PAD_T + plotH - yOffset - h;
@@ -196,7 +176,6 @@ export function TokenTimeSeries({ sessions, range }: Props) {
             axis={axis}
             projects={projects}
             colorFor={colorFor}
-            modelForProject={modelForProject}
             range={range}
           />
         )}
@@ -210,23 +189,19 @@ function TimeSeriesTooltip({
   axis,
   projects,
   colorFor,
-  modelForProject,
   range,
 }: {
   bucket: ReturnType<typeof bucketizeByProject>[number];
   axis: Axis;
   projects: string[];
   colorFor: Map<string, string>;
-  modelForProject: Map<string, string>;
   range: Range;
 }) {
   const rows = projects
     .map((p) => {
       const tb = bucket.byProject.get(p);
       if (!tb) return null;
-      const v = axis === "tokens"
-        ? sumTokens(tb)
-        : costOfTokens(modelForProject.get(p) ?? DEFAULT_MODEL, tb);
+      const v = cellValue(axis, tb);
       return { proj: p, v };
     })
     .filter((r): r is { proj: string; v: number } => !!r && r.v > 0)

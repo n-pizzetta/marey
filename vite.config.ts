@@ -13,6 +13,8 @@ function mareyApi(): Plugin {
     configureServer(server) {
       startApi({
         onParsed: () => server.ws.send({ type: "custom", event: "marey:sessions-updated" }),
+        // The dev UI waits for this push instead of polling, so its requests never say it is open.
+        idleAfter: Infinity,
       });
       server.middlewares.use(async (req, res, next) => {
         try {

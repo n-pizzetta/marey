@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Agent } from "../types";
+import type { DataSource } from "../data/loadSessions";
 import { SourcesStatus } from "./SourcesStatus";
 import { useSourceIssues } from "../utils/sourceIssues";
 import { UnitSetting } from "./UnitSetting";
@@ -7,7 +8,7 @@ import { UnitSetting } from "./UnitSetting";
 const BUG_URL = "https://github.com/n-pizzetta/marey/issues/new/choose";
 
 interface Props {
-  source: "real" | "mock";
+  source: DataSource;
   /** "20s ago", or empty before the first parse. */
   parsedAgo: string;
   reportStatus: { exists: boolean };

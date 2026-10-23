@@ -25,7 +25,7 @@ Marey reads the session data Claude Code already writes under `~/.claude/` (Code
 
 ## Features
 
-**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session: point at a slice to see which session it is, or at a session on the board below to light up its slice. The board groups running sessions by what they need from you (a question, a permission, your turn) and shows each one's share of the limit. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup (Codex's are also asked live, once a minute, as its own TUI does); Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
+**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session: point at a slice to see which session it is, or at a session on the board below to light up its slice. The board groups running sessions by what they need from you (a question, a permission, your turn) and shows each one's share of the limit. Under a Claude Code session, its sub-agents at work: what each was given, its last call and how long it has run. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup (Codex's are also asked live, once a minute, as its own TUI does); Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
 
 <table>
 <tr>
@@ -95,7 +95,7 @@ Search goals and summaries, filter by live / ghost / friction / low-outcome / lo
 
 ### Ghost Cleanup
 
-Empty sessions and sessions whose Claude Code process died are flagged. Get the resume command, reveal the transcript, or delete it permanently.
+Empty sessions and sessions whose Claude Code process died are flagged. Get the resume command, reveal the transcript, or move it to Marey's trash (`~/.claude/marey/trash/`, kept 30 days). A session that turns out to be running again, or was written in the last 10 minutes, is kept.
 
 </td>
 <td width="60%">
@@ -253,7 +253,7 @@ pnpm test         # node --test (parsers, limits, installers)
 pnpm parse        # one-shot dump of every session to ~/.claude/marey/sessions.json
 ```
 
-The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): it runs the parser in-process, keeps sessions in memory and re-parses when `~/.claude/` changes (unchanged transcripts are cached). The front-end fetches a lightweight list (`/api/sessions`) and loads each session's detail on demand (`/api/sessions/:id`). If the API is unreachable, it falls back to built-in demo data.
+The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): it runs the parser in-process, keeps a light copy of each session in memory (a session's calls, prompts and timeline are read when it is opened) and re-parses when `~/.claude/` changes (unchanged transcripts are cached), as long as a dashboard tab is open and visible. The front-end fetches a lightweight list (`/api/sessions`) and loads each session's detail on demand (`/api/sessions/:id`). If the API is unreachable, it falls back to built-in demo data.
 
 ```
 ~/.claude/{projects, sessions, usage-data, file-history, history.jsonl}, ~/.codex, ~/.copilot
