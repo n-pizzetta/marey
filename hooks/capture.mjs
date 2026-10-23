@@ -20,8 +20,10 @@ const CACHE_DIR = join(dataDir(), "cache");
 const STOP_FLAG = process.argv.includes("--stop");
 const TIMEOUT_MS = 1500;
 const SESSION_ID_RE = /^[a-f0-9-]{36}$/i;
-// Previews can contain secrets from tool inputs/outputs: owner-only files.
+// Previews can contain secrets from tool inputs/outputs: owner-only files, in a
+// folder others can't list (file names are session ids).
 const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
 
 async function readStdin() {
   return new Promise((res) => {
@@ -31,7 +33,11 @@ async function readStdin() {
     process.stdin.on("data", (c) => { data += c; });
     // Safety net if stdin never closes. Cleared and unref'd so it never keeps
     // the process alive: the hook runs on every tool call of every session.
-    const timer = setTimeout(() => res(data), TIMEOUT_MS);
+    // Its `data` listener would, so stdin is destroyed too.
+    const timer = setTimeout(() => {
+      process.stdin.destroy();
+      res(data);
+    }, TIMEOUT_MS);
     timer.unref();
     process.stdin.on("end", () => {
       clearTimeout(timer);
@@ -62,7 +68,7 @@ function summarize(tool, input, output) {
     const sessionId = evt.session_id || evt.sessionId;
     if (typeof sessionId !== "string" || !SESSION_ID_RE.test(sessionId)) return;
 
-    await mkdir(CACHE_DIR, { recursive: true });
+    await mkdir(CACHE_DIR, { recursive: true, mode: DIR_MODE });
     const file = join(CACHE_DIR, `${sessionId}.jsonl`);
 
     if (STOP_FLAG) {

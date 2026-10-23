@@ -113,9 +113,10 @@ export function copilotSnapshot(payload, usage, now = Date.now()) {
 
 function writeSnapshot(snap) {
   try {
-    mkdirSync(LIVE, { recursive: true });
+    // Owner-only, like statusline.mjs's: snapshots are named by session id.
+    mkdirSync(LIVE, { recursive: true, mode: 0o700 });
     const tmp = join(LIVE, `${snap.sessionId}.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify(snap));
+    writeFileSync(tmp, JSON.stringify(snap), { mode: 0o600 });
     renameSync(tmp, join(LIVE, `${snap.sessionId}.json`));
   } catch {
     /* never break the status line */

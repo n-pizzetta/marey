@@ -41,6 +41,22 @@ test("a previous command that hangs is stopped after 3 s, with what it started",
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });
 
+test("the limits and live snapshots are owner-only", { skip: process.platform === "win32" }, () => {
+  const claude = mkdtempSync(join(tmpdir(), "marey-statusline-"));
+  const id = "11111111-2222-3333-4444-555555555555";
+  const reset = Math.floor(Date.now() / 1000) + 3600;
+  execFileSync(process.execPath, [WRAPPER], {
+    input: JSON.stringify({ session_id: id, context_window: { context_window_size: 200_000 }, rate_limits: { five_hour: { used_percentage: 10, resets_at: reset } } }),
+    env: { ...process.env, CLAUDE_CONFIG_DIR: claude },
+  });
+  const mode = (...p) => statSync(join(claude, "marey", ...p)).mode & 0o777;
+  assert.equal(mode(), 0o700);
+  assert.equal(mode("live"), 0o700);
+  assert.equal(mode("live", `${id}.json`), 0o600);
+  assert.equal(mode("limits.json"), 0o600);
+  assert.equal(mode("limits-history.jsonl"), 0o600);
+});
+
 /** Runs the installer on `claude` with no Codex or Copilot CLI around. */
 function install(claude) {
   const empty = mkdtempSync(join(tmpdir(), "marey-bin-"));

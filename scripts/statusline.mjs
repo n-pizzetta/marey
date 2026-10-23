@@ -29,6 +29,9 @@ const LIMITS = join(DIR, "limits.json");
 const HISTORY = join(DIR, "limits-history.jsonl");
 const LIVE = join(DIR, "live");
 const HISTORY_MAX_BYTES = 512 * 1024;
+// Owner-only, like the plugin hook's cache: snapshots are named by session id.
+const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
 /** Set for the previous command, so a wrapper it leads back to doesn't run it again. */
 const NESTED = "MAREY_STATUSLINE";
 const PREVIOUS_TIMEOUT_MS = 3000;
@@ -71,7 +74,7 @@ function freshest(held, read, now) {
 function appendHistory(held, cur) {
   const pick = (rl) => JSON.stringify({ five: win(rl.five_hour), seven: win(rl.seven_day) });
   if (held && pick(held) === pick(cur)) return;
-  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), five: win(cur.five_hour), seven: win(cur.seven_day) }) + "\n");
+  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), five: win(cur.five_hour), seven: win(cur.seven_day) }) + "\n", { mode: FILE_MODE });
   if (statSync(HISTORY).size > HISTORY_MAX_BYTES) {
     const lines = readFileSync(HISTORY, "utf8").split("\n").filter(Boolean);
     writeFileSync(HISTORY, lines.slice(Math.floor(lines.length / 2)).join("\n") + "\n");
@@ -82,7 +85,7 @@ function appendHistory(held, cur) {
 function record(payload) {
   if (!payload?.rate_limits) return;
   try {
-    mkdirSync(DIR, { recursive: true });
+    mkdirSync(DIR, { recursive: true, mode: DIR_MODE });
     let held = null;
     try {
       held = JSON.parse(readFileSync(LIMITS, "utf8")).rate_limits ?? null;
@@ -98,7 +101,7 @@ function record(payload) {
     }
     appendHistory(held, cur);
     const tmp = join(DIR, `limits.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: cur }));
+    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: cur }), { mode: FILE_MODE });
     renameSync(tmp, LIMITS);
   } catch {
     /* never break the status line */
@@ -108,9 +111,9 @@ function record(payload) {
 function writeSnapshot(snap) {
   if (!snap) return;
   try {
-    mkdirSync(LIVE, { recursive: true });
+    mkdirSync(LIVE, { recursive: true, mode: DIR_MODE });
     const tmp = join(LIVE, `${snap.sessionId}.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify(snap));
+    writeFileSync(tmp, JSON.stringify(snap), { mode: FILE_MODE });
     renameSync(tmp, join(LIVE, `${snap.sessionId}.json`));
   } catch {
     /* never break the status line */
