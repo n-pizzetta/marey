@@ -243,5 +243,6 @@ const AUTHORED_NOW = Date.parse("2026-04-20T15:00:00Z");
 export const sessions: Session[] = RAW_SESSIONS.map((s) => ({
   ...s,
   startedAt: new Date(Date.parse(s.startedAt) + (Date.now() - AUTHORED_NOW)).toISOString(),
-  costUsd: costOf(s.model, s.tokens),
+  // Totals, not one request: the base tier (`costOf`).
+  costUsd: costOf(s.model, s.tokens, 0),
 }));

@@ -1,5 +1,5 @@
 import type { Agent, Session } from "../types";
-import { priceFor } from "../../scripts/models.mjs";
+import { priceFor, promptTokens } from "../../scripts/models.mjs";
 import { costOfTokens, FIVE_HOUR_MS, sumTokens } from "./fleetStats";
 import { SEVEN_DAY_MS, type LimitWindow, type ProviderLimits } from "./rateLimits";
 import { formatCost, formatTokens } from "./format";
@@ -80,7 +80,8 @@ function sharesIn(sessions: Session[], fromMs: number, toMs: number, weigh: "wei
       tokens += sumTokens(t.tokens);
       cost += c;
       credits += t.credits ?? 0;
-      weight += readWeight === 1 ? c : c - (1 - readWeight) * (t.tokens.cacheRead / 1e6) * priceFor(model).cacheRead;
+      // the reads' discount at the turn's own tier, like `c`
+      weight += readWeight === 1 ? c : c - (1 - readWeight) * (t.tokens.cacheRead / 1e6) * priceFor(model, promptTokens(t.tokens)).cacheRead;
     }
     if (tokens === 0) continue;
     rows.push({ session: s, tokens, cost, credits, weight });
