@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A session that had ended kept its context line in the list (`ctx 19% · cache cold · Clear if the task is done`) for up to 6 hours. The line, its cache countdown and its advice now only show while a session runs, for Claude Code, Codex and Copilot CLI alike; an ended session's view keeps only its last context, labelled as such.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

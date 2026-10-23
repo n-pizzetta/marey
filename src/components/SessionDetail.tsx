@@ -404,7 +404,7 @@ export function SessionDetail({
             <div className="goal">{session.goal}</div>
             {/* on the title's first line, right-aligned: the context figures and verdict, then the primary action */}
             <div className="goal-actions">
-              <SessionContext sessionId={session.id} />
+              <SessionContext session={session} />
               {canOpenTerminal(session) ? (
                 <button className="resume-btn" onClick={openSessionTerminal} disabled={opening} title="Bring the terminal running this session to the front">
                   {opening ? "Opening…" : "Open terminal"}

@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { adviseContext, expiringSoon, fmtLeft, THRESHOLDS, type ContextAdvice, type ContextSnapshot } from "../../scripts/context-advice.mjs";
 import { formatTokens } from "../utils/format";
-import { useSnapshotMap } from "../utils/liveContext";
+import { liveSnapshot, useSnapshotMap } from "../utils/liveContext";
+import type { Session } from "../types";
 import { useNow } from "../utils/useNow";
 import "../context.css";
 
@@ -55,7 +56,7 @@ export function StatusSep({ className = "" }: { className?: string }) {
   return <span className={`status-sep ${className}`} aria-hidden="true">·</span>;
 }
 
-function Ring({ pct }: { pct: number | null }) {
+function Ring({ pct, color = fillColor(pct) }: { pct: number | null; color?: string }) {
   const r = 7;
   const c = 2 * Math.PI * r;
   const frac = Math.min(1, (pct ?? 0) / 100);
@@ -63,7 +64,7 @@ function Ring({ pct }: { pct: number | null }) {
     <svg className="ctx-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
       <circle cx="9" cy="9" r={r} fill="none" stroke="var(--c-hairline-strong)" strokeWidth="2.5" />
       <circle
-        cx="9" cy="9" r={r} fill="none" stroke={fillColor(pct)} strokeWidth="2.5" strokeLinecap="round"
+        cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
         strokeDasharray={`${c * frac} ${c}`} transform="rotate(-90 9 9)"
       />
     </svg>
@@ -168,8 +169,36 @@ export function ContextSummary({ snap }: { snap: ContextSnapshot }) {
   );
 }
 
-/** The context figures of one session, when the status line wrapper reported on it recently. */
-export function SessionContext({ sessionId }: { sessionId: string }) {
-  const snap = useSnapshotMap().get(sessionId);
-  return snap ? <ContextSummary snap={snap} /> : null;
+/**
+ * An ended session's context as its status line last reported it, said as such and in neutral tones:
+ * no cache countdown and no verdict, they only hold while the session runs.
+ */
+function LastContext({ snap }: { snap: ContextSnapshot }) {
+  const now = useNow(60_000);
+  const { usedPct: used, tokens, size } = snap.context;
+  const fill = `${formatTokens(tokens)}${size ? ` / ${formatWindow(size)}` : ""}`;
+  const title = `Context window when the session last reported, ${fmtLeft((now - snap.capturedAt) / 1000)} ago: ${formatTokens(tokens)}${size ? ` of ${formatTokens(size)}` : ""} tokens. The session has ended: no cache countdown or advice.`;
+  return (
+    <div className="status-context">
+      <span className="status-fig status-fill tabular" title={title}>
+        <Ring pct={used} color="var(--c-text-faint)" />
+        <span>Last context</span>
+        <b>{used === null ? "—" : `${used}%`}</b>
+      </span>
+      <StatusSep className="status-fill-tokens" />
+      <span className="status-fig status-fill-tokens tabular" title={title}>{fill}</span>
+    </div>
+  );
+}
+
+/**
+ * The context figures of one session, when the status line wrapper reported on it recently: the full
+ * summary while it runs, only the last context it reported once it has ended.
+ */
+export function SessionContext({ session }: { session: Pick<Session, "id" | "live"> }) {
+  const snaps = useSnapshotMap();
+  const live = liveSnapshot(session, snaps);
+  if (live) return <ContextSummary snap={live} />;
+  const last = snaps.get(session.id);
+  return last ? <LastContext snap={last} /> : null;
 }
