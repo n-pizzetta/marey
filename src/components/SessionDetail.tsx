@@ -559,10 +559,10 @@ function GhostBanner({ session }: { session: Session }) {
     }
   };
 
-  const deletePermanently = async () => {
+  const deleteGhost = async () => {
     if (!confirm(
-      "Delete this ghost session permanently?\n\n" +
-        "This removes the transcript jsonl and its stale live file. Cannot be undone.",
+      "Delete this ghost session?\n\n" +
+        "Moves the transcript jsonl and its sub-agents to ~/.claude/marey/trash/ (kept 30 days) and removes its stale live file.",
     )) return;
     setBusy(true);
     try {
@@ -622,8 +622,8 @@ function GhostBanner({ session }: { session: Session }) {
         <button className="ghost-action" onClick={openTranscript} disabled={busy}>
           Reveal transcript
         </button>
-        <button className="ghost-action danger" onClick={deletePermanently} disabled={busy}>
-          {busy ? "Deleting…" : "Delete permanently"}
+        <button className="ghost-action danger" onClick={deleteGhost} disabled={busy}>
+          {busy ? "Deleting…" : "Move to trash"}
         </button>
       </div>
     </div>

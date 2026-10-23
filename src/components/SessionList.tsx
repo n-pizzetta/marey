@@ -349,7 +349,7 @@ export function BulkGhostBar({
   };
   const bulkDelete = async () => {
     if (!onBulkDelete || selectedInView.length === 0) return;
-    if (!confirm(`Delete ${selectedInView.length} ghost session(s) permanently?\n\nRemoves the transcript jsonl + any stale live file. Cannot be undone.`)) return;
+    if (!confirm(`Delete ${selectedInView.length} ghost session(s)?\n\nMoves the transcripts to ~/.claude/marey/trash/ (kept 30 days) and removes any stale live file. Sessions in use again are skipped.`)) return;
     setBusy(true);
     try {
       await onBulkDelete(selectedInView);

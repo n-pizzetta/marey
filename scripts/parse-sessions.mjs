@@ -814,8 +814,9 @@ export function claudePids(pids) {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // EPERM: alive, owned by another user (sudo).
+      return err.code === "EPERM";
     }
   });
   if (alive.length === 0) return new Set();

@@ -490,6 +490,13 @@ function App() {
                 toastError("Bulk delete failed: " + (await res.text()));
                 return;
               }
+              // Sessions in use again since the last refresh are skipped, with why.
+              const { results } = (await res.json()) as { results: { refused?: string; errors: string[] }[] };
+              const kept = results.filter((r) => r.refused || r.errors.length);
+              if (kept.length) {
+                const why = [...new Set(kept.map((r) => r.refused ?? r.errors.join(", ")))].join("; ");
+                toastError(`${kept.length} of ${results.length} not deleted: ${why}`);
+              }
               setCompareIds(new Set());
             }}
           />

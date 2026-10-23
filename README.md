@@ -95,7 +95,7 @@ Search goals and summaries, filter by live / ghost / friction / low-outcome / lo
 
 ### Ghost Cleanup
 
-Empty sessions and sessions whose Claude Code process died are flagged. Get the resume command, reveal the transcript, or delete it permanently.
+Empty sessions and sessions whose Claude Code process died are flagged. Get the resume command, reveal the transcript, or move it to Marey's trash (`~/.claude/marey/trash/`, kept 30 days). A session that turns out to be running again, or was written in the last 10 minutes, is kept.
 
 </td>
 <td width="60%">

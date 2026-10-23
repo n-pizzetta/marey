@@ -80,10 +80,11 @@ Copilot CLI (`~/.copilot`, or `$COPILOT_HOME`), also read-only: `session-state/<
   - `host-limits.json`: what `/marey:limits` changed in Codex and Copilot CLI (the previous `[tui] status_line` items, whether `footer.showQuota` was set), for `--uninstall`.
   - `sessions.json`: full parse dump, only when `pnpm parse` is run by hand. The app never reads it.
   - `models.json`: never written; the user creates it to override prices.
+  - `trash/<time>-<id>/<project dir>/`: deleted ghosts (transcript and sub-agent folder, in their project dir's name so putting one back is one move), mode `0700`. Entries older than 30 days are removed at the next delete.
 - `~/.claude/settings.json` is modified only by `install-statusline.mjs` (i.e. when the user runs `/marey:limits`), with a backup at `settings.json.marey.bak`. `--uninstall` restores the previous `statusLine`.
 - The same command also edits, when they are installed, `~/.codex/config.toml` (`$CODEX_HOME`; `[tui] status_line`, backup at `config.toml.marey.bak`) and Copilot CLI's `footer.showQuota` (through `copilot config`). See §5.
 - Deletions and moves of Claude Code files happen only on explicit user action in the UI:
-  - **Ghost delete** (single or bulk): unlinks `projects/<slug>/<id>.jsonl` and `sessions/.stale/<id>.json`, and only for sessions the parser currently classifies as ghosts.
+  - **Ghost delete** (single or bulk): moves `projects/<slug>/<id>.jsonl` and its `<id>/` sub-agent folder to `~/.claude/marey/trash/` (above; `rename`, or copy then remove across disks) and unlinks `sessions/.stale/<id>.json` and the plugin's `cache/<id>.jsonl`, only for sessions the parser currently classifies as ghosts. The parse can be seconds old, so `deleteGhost` looks again first and refuses (409; skipped in a bulk delete, with the reason in its result) when a `sessions/*.json` pid file names the session with a running Claude Code (`claudePids`), or the transcript was written in the last 10 minutes.
   - **Trash a parse error**: moves an unparseable `usage-data/session-meta/<file>.json` to the macOS Trash (via Finder/`osascript`), or on other platforms to `usage-data/session-meta/.trash/`.
 - `sessions/<pid>.json` files are never moved or deleted (see `classifyLiveFiles`).
 
@@ -96,7 +97,7 @@ Used as a library by `scripts/api.mjs`, and as a CLI (`pnpm parse`) that writes 
 ### Pipeline (`parseAllSessions`)
 
 1. `loadModelOverrides()` reads `~/.claude/marey/models.json` and applies it via `setModelOverrides` (invalid file → warning, built-in table).
-2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds **and** its `comm` matches `claude` (`claudePids`: one `ps -p <pids> -o pid=,comm=` for all the pid files). Read-only. Ids in `sessions/.stale/` are added to the dead set.
+2. `classifyLiveFiles()` splits `sessions/*.json` into alive pid files and dead session ids. A pid is alive if `process.kill(pid, 0)` succeeds (or fails with `EPERM`: another user's process) **and** its `comm` matches `claude` (`claudePids`: one `ps -p <pids> -o pid=,comm=` for all the pid files). Read-only. Ids in `sessions/.stale/` are added to the dead set.
 3. `readHistoryBySession()` groups `history.jsonl` by session id.
 4. `indexTranscripts()` maps every `projects/*/<id>.jsonl` by session id. Project directory names are lossy (`.`, `_`, `/` all become `-`), so lookups are by id only, never by reconstructed path.
 5. `collectLive()` expands each alive pid file to its `/clear` chain (sibling transcripts in the same project dir with the same latest `custom-title`, read from the end of each file, modified later); only the newest in the chain is marked live.
@@ -270,8 +271,8 @@ Shared by the production server and the Vite dev server, so both expose the same
 | GET | `/api/live-context` | `readLiveContext()`: context / prompt-cache snapshots per session, newest first. | `no-store`. |
 | GET | `/api/report-status` | Whether `usage-data/report.html` exists, and its mtime. | `no-store`. |
 | POST | `/api/ghost/:id/reveal` | Reveal the transcript in the OS file manager (`open -R`, `explorer /select`, whose exit code 1 is not an error, `xdg-open` on the folder). | UUID check; POST only. |
-| POST | `/api/ghost/:id/delete` | Delete one ghost's transcript (+ `.stale` file), then re-parse. | UUID check; 409 unless currently classified ghost. |
-| POST | `/api/ghost/bulk-delete` | Body `{ ids: [...] }`; same as above for each id. | Ids filtered to valid UUIDs that are ghosts; 400 if none remain. |
+| POST | `/api/ghost/:id/delete` | Move one ghost's transcript to Marey's trash (+ remove its `.stale` file), then re-parse (§2). | UUID check; 409 unless currently classified ghost, or (with the reason) if it is in use again. |
+| POST | `/api/ghost/bulk-delete` | Body `{ ids: [...] }`; same as above for each id. Returns `{ count, results }`: `count` deleted, a skipped id's result carries `refused` or `errors`. | Ids filtered to valid UUIDs that are ghosts; 400 if none remain. |
 | POST | `/api/parse-error/:file/trash` | Trash an unparseable session-meta file, then re-parse. | File name must be `<uuid>.json`; POST only. |
 | GET | `/usage-report.html` | Proxies the `/insights` report (placeholder page with 404 if missing, 500 if it can't be read). | `Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:`. |
 
@@ -294,7 +295,7 @@ The API serves prompts, file snapshots and account info, and can delete files, s
 - **DNS rebinding.** Every request whose `Host` is not `localhost`, `127.0.0.1` or `[::1]` (any port) gets 403, in prod and dev.
 - **Cross-site writes.** Non-GET/HEAD requests are rejected when `Sec-Fetch-Site` is present and not `same-origin`, or when `Origin` does not match `Host`. Local non-browser clients (curl) send neither header and are allowed. Cross-origin GETs cannot read responses since no CORS headers are sent.
 - **Input validation.** Session ids, snapshot names and meta file names are regex-checked before touching the filesystem; the static server normalizes paths and refuses anything outside `dist/`.
-- **Destructive actions are narrow.** Deletes only apply to sessions the parser currently classifies as ghosts; parse-error cleanup moves to a trash rather than unlinking.
+- **Destructive actions are narrow.** Deletes only apply to sessions the parser currently classifies as ghosts and that still look unused when deleted; ghost deletes and parse-error cleanup move to a trash rather than unlinking.
 - **Terminal focus is narrow.** It only targets the pid of a session the parser currently classifies as live, checked again as a `claude` process. Terminal ids reach `osascript` as `argv`, never inside the script. Its only write is the marker title to that session's own tty, written back right after.
 - **Generated HTML is sandboxed.** `/usage-report.html` is served with a CSP `sandbox` so it cannot run scripts on the API origin.
 - **Hook output is private.** Plugin cache files are created with mode `0600` (previews can contain secrets from tool I/O).
@@ -384,7 +385,7 @@ React 19 + TypeScript, bundled by Vite. No router or state library.
 
 ## 11. Known limitations
 
-- **Live detection needs `ps`.** `claudePids` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed.
+- **Live detection needs `ps`.** `claudePids` shells out to `ps`, which does not exist on Windows; there, running sessions are not detected and their pid files make them look crashed (deleting one is still refused while its transcript was written in the last 10 minutes).
 - **Copilot limits are as fresh as their last request** on this machine: they are only logged with a request. Use elsewhere (another machine, an IDE, the web) shows up with the next one. Codex's too when `codex app-server` can't be asked (Codex not on the `PATH`, signed in with an API key, offline).
 - **Codex live detection needs `lsof`** to tell which codex process writes a rollout. Without it, a killed CLI whose task was open shows as live for up to 30 minutes while another codex process (the IDE extension's server) runs. An open TUI waiting for the next prompt has no open task, so it is not live.
 - **Transcript changes are picked up by polling.** `projects/` and `~/.codex/sessions/` are not watched; updates arrive through the 10 s refresh or through a change in a watched dir (the plugin hook's cache writes trigger one on every tool call), and only while a dashboard asks for them (§6).
