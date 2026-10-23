@@ -1773,6 +1773,8 @@ function FileEntry({
   }, [open, sessionId, hash, versions, contents]);
 
   const firstPreview = contents?.[versions[0]]?.split("\n").find((l) => l.trim()) ?? "";
+  // A version that didn't load (backup gone, server down) is said so, not shown as an empty file.
+  const missing = contents ? versions.filter((v) => !(v in contents)) : [];
 
   const basename = path ? path.split("/").pop() ?? path : null;
   const dirPath = path && basename ? path.slice(0, -basename.length).replace(/\/$/, "") : null;
@@ -1794,7 +1796,13 @@ function FileEntry({
       {open && (
         <div className="file-body">
           {loading && <div className="mono dim" style={{ padding: 10 }}>loading…</div>}
-          {!loading && versions.length === 1 && (
+          {missing.length > 0 && (
+            <div className="mono dim" style={{ padding: 10 }}>
+              Could not load {missing.map((v) => `v${v}`).join(", ")}: {missing.length > 1 ? "their backups" : "its backup"} may be gone.{" "}
+              <button className="link-btn" onClick={() => setContents(null)}>Retry</button>
+            </div>
+          )}
+          {!loading && versions.length === 1 && !missing.length && (
             <div className="mono dim" style={{ padding: 10 }}>
               Single version. No diff to render.
               <pre className="file-raw">{(contents?.[versions[0]] ?? "").slice(0, 4000)}</pre>
@@ -1803,6 +1811,7 @@ function FileEntry({
           {!loading && versions.length > 1 &&
             versions.slice(0, -1).map((v, i) => {
               const next = versions[i + 1];
+              if (missing.includes(v) || missing.includes(next)) return null;
               const a = contents?.[v] ?? "";
               const b = contents?.[next] ?? "";
               const patch = createPatch(`${hash}@v${next}`, a, b, `v${v}`, `v${next}`, { context: 2 });
