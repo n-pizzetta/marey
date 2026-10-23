@@ -19,7 +19,7 @@
  * Must stay fast and never fail: the status line renders on every turn.
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -220,9 +220,8 @@ writeSnapshot(snap);
 // path): if it fails, hangs or prints nothing, show our own line instead of a blank one.
 const next = previousCommand();
 if (next) {
-  // Its own process group, so a timeout also stops what the shell started.
-  const posix = process.platform !== "win32";
-  const child = spawn(next, { shell: true, detached: posix, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, [NESTED]: "1" } });
+  // Not detached: a status line that reads the terminal's width (`/dev/tty`) needs to stay in its session.
+  const child = spawn(next, { shell: true, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, [NESTED]: "1" } });
   let out = "";
   let done = false;
   const finish = (ok) => {
@@ -233,8 +232,9 @@ if (next) {
   };
   setTimeout(() => {
     try {
-      if (posix) process.kill(-child.pid, "SIGKILL");
-      else child.kill();
+      // What the shell started first (`pkill -P`: its children), then the shell.
+      if (process.platform !== "win32") spawnSync("pkill", ["-KILL", "-P", String(child.pid)]);
+      child.kill("SIGKILL");
     } catch {
       /* already gone */
     }
