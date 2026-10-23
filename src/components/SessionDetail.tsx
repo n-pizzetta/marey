@@ -836,6 +836,9 @@ function ToolsTab({
   // newest first; the newest call of a live session may still be running
   const sequence = [...shown].reverse();
   const truncated = all.length >= 300;
+  // Capture stops at 300 calls: say so where the calls shown run past the last one captured.
+  const lastCaptured = all.length ? all[all.length - 1].t : 0;
+  const pastCap = truncated && (!focus || focus.end > lastCaptured);
 
   // the calls in order on the left; their count per tool in a card on the right (above it on narrow screens)
   return (
@@ -878,7 +881,11 @@ function ToolsTab({
             </div>
           )}
           {sequence.length === 0 ? (
-            <div className="placeholder">No tool sequence available. The By tool card has the counts.</div>
+            <div className="placeholder">
+              {focus && pastCap && focus.start >= lastCaptured
+                ? "This prompt's calls come after the first 300, the only ones captured. The By tool card counts them all."
+                : "No tool sequence available. The By tool card has the counts."}
+            </div>
           ) : (
             <div className="tool-sequence">
               {sequence.map((s, i) => {
@@ -894,7 +901,7 @@ function ToolsTab({
                   />
                 );
               })}
-              {truncated && (
+              {pastCap && (
                 <div className="mono dim" style={{ padding: "8px 10px", fontSize: "var(--fs-sm)" }}>
                   (later tool calls truncated — showing the first 300 of each transcript)
                 </div>
