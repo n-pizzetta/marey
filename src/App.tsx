@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { BrandMark } from "./components/BrandMark";
 import { type FilterId } from "./components/SessionFilters";
 import { AppHeader, type ReportStatus } from "./components/AppHeader";
@@ -36,6 +36,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { toastError } from "./utils/toast";
 
 const POLL_MS = 5000;
+/** Shortest gap between two fetches of an open running session's detail. */
+const DETAIL_REFRESH_MS = 15_000;
 const STORAGE_KEY = "marey:state";
 
 const FILTER_IDS: FilterId[] = ["all", "live", "ghost", "friction", "failed", "lowquality"];
@@ -284,18 +286,27 @@ function App() {
     : null;
 
   const [detail, setDetail] = useState<{ id: string; data: Session | null } | null>(null);
+  // A running session's detail follows it: fetched again when the list says it moved or ended, at
+  // most every DETAIL_REFRESH_MS (each fetch re-parses its transcript).
+  const lastDetailFetch = useRef<{ id: string; at: number } | null>(null);
+  const detailVersion = selectedSummary?.live ? selectedSummary.lastEventAt ?? "" : "ended";
   useEffect(() => {
     if (!selectedId) return;
-    let cancelled = false;
-    loadSessionDetail(selectedId)
-      .then((d) => { if (!cancelled) setDetail({ id: selectedId, data: d }); })
-      .catch(() => {
-        if (cancelled) return;
-        setDetail({ id: selectedId, data: null });
-        toastError("Could not load the session details. Showing the summary only.");
-      });
-    return () => { cancelled = true; };
-  }, [selectedId]);
+    const id = selectedId;
+    const last = lastDetailFetch.current;
+    const wait = last?.id === id ? Math.max(0, DETAIL_REFRESH_MS - (Date.now() - last.at)) : 0;
+    const timer = setTimeout(() => {
+      lastDetailFetch.current = { id, at: Date.now() };
+      // No cancel: a later poll re-running this effect must not drop the answer; the view checks its id.
+      loadSessionDetail(id)
+        .then((d) => setDetail({ id, data: d }))
+        .catch(() => {
+          setDetail((prev) => (prev?.id === id ? prev : { id, data: null }));
+          if (last?.id !== id) toastError("Could not load the session details. Showing the summary only.");
+        });
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [selectedId, detailVersion]);
   const selectedDetail = detail && detail.id === selectedId ? detail.data : null;
 
   const selected: Session | null = selectedSummary || selectedDetail
@@ -307,6 +318,10 @@ function App() {
         fileHistory: [],
         ...selectedSummary,
         ...selectedDetail,
+        // the list is fresher than a detail fetched a few seconds ago on whether the session runs
+        ...(selectedSummary && selectedDetail
+          ? { live: selectedSummary.live, liveState: selectedSummary.liveState, outcome: selectedSummary.outcome, lastEventAt: selectedSummary.lastEventAt }
+          : {}),
       } as Session)
     : null;
 
