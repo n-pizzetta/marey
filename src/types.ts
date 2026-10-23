@@ -150,7 +150,8 @@ export interface Session {
   clearedInto?: string;
   quality?: SessionQuality | null;
   fileHistory?: Array<{ hash: string; versions: number[]; path?: string }>;
-  prompts?: Array<{ t: number; text: string; preview: string }>;
+  /** The list payload sends `preview` only; `text` comes with the detail (`loadSessionDetail`). */
+  prompts?: Array<{ t: number; text?: string; preview: string }>;
   /** Main-thread calls in order; a call that started a sub-agent holds that sub-agent's calls in `children`. */
   toolSequence?: ToolCall[];
   pluginCapture?: {

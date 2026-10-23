@@ -749,7 +749,7 @@ function OverviewTab({
           })()}
           {sel !== null && (() => {
             const p = prompts[sel];
-            const kind = classifyPrompt(p.text);
+            const kind = classifyPrompt(p.text ?? p.preview);
             const tc = promptTools[sel];
             const w = weights[sel];
             return (
@@ -779,7 +779,7 @@ function OverviewTab({
                     </button>
                   )}
                 </div>
-                <pre className="prompt-panel-body">{p.text}</pre>
+                <pre className="prompt-panel-body">{p.text ?? p.preview}</pre>
               </div>
             );
           })()}
@@ -1351,7 +1351,7 @@ function TokensByPrompt({ session, unit, openIdx, onOpened }: { session: Session
               {isOpen && (
                 <div className="prompt-panel">
                   <PromptCostBreakdown s={s} model={session.model} />
-                  {p && <pre className="prompt-panel-body">{p.text}</pre>}
+                  {p && <pre className="prompt-panel-body">{p.text ?? p.preview}</pre>}
                 </div>
               )}
             </Fragment>

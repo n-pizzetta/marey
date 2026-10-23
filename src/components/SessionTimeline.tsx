@@ -271,7 +271,7 @@ function TimelinePrompts({
           <span>Prompt</span>
         </div>
         {prompts.map((p, i) => {
-          const kind = classifyPrompt(p.text);
+          const kind = classifyPrompt(p.text ?? p.preview);
           const end = prompts[i + 1]?.t ?? Infinity;
           const open = openIdx === i;
           return (
@@ -312,7 +312,7 @@ function TimelinePrompts({
                 )}
                 <span className="prompt-row-preview mono">{p.preview}</span>
               </div>
-              {open && <pre className="prompt-panel-body">{p.text}</pre>}
+              {open && <pre className="prompt-panel-body">{p.text ?? p.preview}</pre>}
             </Fragment>
           );
         })}

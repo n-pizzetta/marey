@@ -1,6 +1,8 @@
 import type { Session } from "../types";
 import { formatDuration, formatTokens, formatCost, outcomeLabel } from "./format";
 import { flattenCalls } from "./toolCalls";
+import { toastError } from "./toast";
+import { loadSessionDetail } from "../data/loadSessions";
 
 function esc(s: string): string {
   return s
@@ -25,7 +27,7 @@ export function exportSessionHtml(session: Session): string {
   const promptRows = prompts
     .map(
       (p) =>
-        `<div class="prompt"><div class="t">${formatRelTime(p.t)}</div><pre>${esc(p.text)}</pre></div>`,
+        `<div class="prompt"><div class="t">${formatRelTime(p.t)}</div><pre>${esc(p.text ?? p.preview)}</pre></div>`,
     )
     .join("\n");
 
@@ -123,8 +125,16 @@ export function exportSessionHtml(session: Session): string {
 </html>`;
 }
 
-export function downloadSessionHtml(session: Session) {
-  const html = exportSessionHtml(session);
+/** The view can hold the list summary only (detail still loading, or failed): the export loads the full session. */
+export async function downloadSessionHtml(session: Session) {
+  let full = session;
+  try {
+    const detail = await loadSessionDetail(session.id);
+    if (detail) full = { ...session, ...detail };
+  } catch {
+    toastError("Could not load the full session: the export holds its summary only.");
+  }
+  const html = exportSessionHtml(full);
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
