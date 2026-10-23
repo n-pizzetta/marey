@@ -106,7 +106,12 @@ function QualityChip({ quality }: { quality: SessionQuality }) {
     const onClick = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't let App's Escape handler close the session view as well.
+      e.stopPropagation();
+      setOpen(false);
+    };
     window.addEventListener("scroll", updatePos, true);
     window.addEventListener("resize", updatePos);
     document.addEventListener("mousedown", onClick);
@@ -1078,7 +1083,12 @@ function InfoDot({ title }: { title: string }) {
     const onClick = (e: MouseEvent) => {
       if (!btnRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't let App's Escape handler close the session view as well.
+      e.stopPropagation();
+      setOpen(false);
+    };
     window.addEventListener("scroll", updatePos, true);
     window.addEventListener("resize", updatePos);
     document.addEventListener("mousedown", onClick);

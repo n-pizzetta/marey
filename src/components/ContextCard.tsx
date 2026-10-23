@@ -99,7 +99,12 @@ export function ContextSummary({ snap }: { snap: ContextSnapshot }) {
     const onDown = (e: MouseEvent) => {
       if (!btnRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't let App's Escape handler close the session view as well.
+      e.stopPropagation();
+      setOpen(false);
+    };
     window.addEventListener("scroll", place, true);
     window.addEventListener("resize", place);
     document.addEventListener("mousedown", onDown);
