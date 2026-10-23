@@ -392,7 +392,7 @@ const READ_CHUNK = 1 << 20;
  */
 async function readClaudeLight(path, st, sidechain, hit) {
   const resume = !!hit?.parser && st.ino === hit.ino && st.size >= hit.offset && (await marksOf(path, hit.offset)) === hit.marks;
-  const parser = resume ? hit.parser : createTranscriptParser(sidechain);
+  const parser = resume ? hit.parser : createTranscriptParser(path, sidechain);
   const offset = await feedFrom(path, resume ? hit.offset : 0, parser);
   claudeReads[resume ? "appended" : "whole"]++;
   const entry = { mtimeMs: st.mtimeMs, size: st.size, light: true, data: lightTranscript(parser.result()) };
@@ -464,7 +464,7 @@ async function feedFrom(path, from, parser) {
  * What it keeps across lines is copied (`clip`, `own`): a server keeps the parser of a transcript
  * that is still being written, and a slice would keep every tool output it was cut from.
  */
-function createTranscriptParser(sidechain) {
+function createTranscriptParser(path, sidechain) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
@@ -508,6 +508,11 @@ function createTranscriptParser(sidechain) {
   let version = null;
   // Sub-agent transcripts are scored as part of nothing: quality is about the main context.
   const quality = sidechain ? null : createQualityTracker();
+  // A line written in another session (`copiedTurns`): a background fork's copies keep the original's
+  // session_id, other copies the original's sessionId. A sub-agent's lines carry its session's id.
+  const ownId = sidechain ? null : basename(path, ".jsonl");
+  const copied = (j) =>
+    (typeof j.session_id === "string" && j.session_id !== j.sessionId) || (!!ownId && typeof j.sessionId === "string" && j.sessionId !== ownId);
 
   function line(j) {
     // Valid JSON that is not a record (`null`, a number) is skipped like an unreadable line.
@@ -532,7 +537,8 @@ function createTranscriptParser(sidechain) {
 
     if (msg.role === "assistant") {
       if (msg.model === "<synthetic>") return;
-      const key = msg.id || j.requestId || `line-${turns.length}-${tsMs}`;
+      const msgId = msg.id || j.requestId || null;
+      const key = msgId ?? `line-${turns.length}-${tsMs}`;
       let turn = turnById.get(key);
       if (!turn) {
         const turnModel = normalizeModel(msg.model) ?? model;
@@ -547,6 +553,8 @@ function createTranscriptParser(sidechain) {
           inPreview: clip(pendingInPreview, 240),
           outPreview: "",
           ...(sidechain ? { sidechain: true } : {}),
+          ...(msgId ? { msgId } : {}),
+          ...(copied(j) ? { copy: true } : {}),
         };
         turnById.set(key, turn);
         turns.push(turn);
@@ -746,7 +754,7 @@ function feedLine(parser, text) {
  * `\n` only (`feedFrom`): readline also ends them at U+2028 and U+2029, which JSON strings may hold.
  */
 async function parseTranscriptFile(path, sidechain) {
-  const parser = createTranscriptParser(sidechain);
+  const parser = createTranscriptParser(path, sidechain);
   await feedFrom(path, 0, parser);
   return parser.result();
 }
@@ -947,6 +955,33 @@ async function readSubagents(entry, sessionId, read) {
   return out;
 }
 
+/**
+ * A resumed or background-forked session continues in a transcript that starts with a copy of the
+ * conversation, message ids included. A message belongs to the transcript whose line isn't marked as
+ * a copy (`copy`), else to the one that started first (then ended first). Session id → the message
+ * ids its transcript holds that another one owns.
+ */
+async function copiedTurns(index, read) {
+  const transcripts = [];
+  for (const [id, entry] of index) {
+    const t = await readTranscriptFile(entry.path, read);
+    if (t?.turns.length) transcripts.push({ id, turns: t.turns, firstTs: t.firstTs ?? 0, lastTs: t.lastTs ?? 0 });
+  }
+  transcripts.sort((a, b) => a.firstTs - b.firstTs || a.lastTs - b.lastTs || (a.id < b.id ? -1 : 1));
+  const owner = new Map();
+  for (const copy of [false, true]) {
+    for (const { id, turns } of transcripts) {
+      for (const tu of turns) if (tu.msgId && !!tu.copy === copy && !owner.has(tu.msgId)) owner.set(tu.msgId, id);
+    }
+  }
+  const copies = new Map();
+  for (const { id, turns } of transcripts) {
+    const theirs = turns.filter((tu) => tu.msgId && owner.get(tu.msgId) !== id).map((tu) => tu.msgId);
+    if (theirs.length) copies.set(id, new Set(theirs));
+  }
+  return copies;
+}
+
 /** Alive pid files, expanded to their /clear chains. id → live info. */
 async function collectLive(liveFiles, index) {
   const byId = new Map();
@@ -1036,7 +1071,7 @@ function agentContextOf(agent, t, subs) {
  * `read` says how transcripts are read (`readTranscriptFile`): with `light`, the session leaves out
  * the detail view's fields (`DETAIL_FIELDS`, `sessionDetail` fills them).
  */
-async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], read = {} }) {
+async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], copies = null, read = {} }) {
   const agent = entry?.agent ?? "claude";
   const light = !!read.light;
   const t = entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
@@ -1049,8 +1084,21 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   const isLive = !!live?.isLive;
   const lastTs = Math.max(t?.lastTs ?? 0, ...subs.map((sub) => sub.lastTs ?? 0)) || null;
 
-  const mainTurns = t?.turns ?? [];
-  const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns)].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
+  // Each message counts once: not the ones another transcript owns (`copies`), nor the ones a
+  // sub-agent copied from the conversation it started from (an aside question, a compaction).
+  const seen = new Set(copies);
+  const dropped = [];
+  const owned = (tu) => {
+    if (!tu.msgId) return true;
+    if (seen.has(tu.msgId)) {
+      dropped.push(tu);
+      return false;
+    }
+    seen.add(tu.msgId);
+    return true;
+  };
+  const mainTurns = (t?.turns ?? []).filter(owned);
+  const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns.filter(owned))].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
   const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs, t?.promptsCutAt ?? null);
 
   const toolCounts = {};
@@ -1064,6 +1112,11 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   } else {
     // Transcript deleted: session-meta only has input/output totals.
     tokens = { ...emptyTokens(), input: meta?.input_tokens ?? 0, output: meta?.output_tokens ?? 0 };
+  }
+  // What the dropped turns added to their transcript's totals.
+  for (const tu of dropped) {
+    for (const k of Object.keys(tokens)) tokens[k] -= tu.tokens[k] ?? 0;
+    for (const tool of tu.tools) if (!--toolCounts[tool]) delete toolCounts[tool];
   }
   const model = dominantModel(allTurns, t?.model ?? DEFAULT_MODEL);
 
@@ -1417,6 +1470,7 @@ export async function parseAllSessions({ light = false } = {}) {
 
   const now = Date.now();
   const all = [];
+  const copies = await copiedTurns(index, read);
   for (const id of new Set([...index.keys(), ...metaById.keys(), ...liveById.keys()])) {
     const input = {
       entry: index.get(id),
@@ -1424,6 +1478,7 @@ export async function parseAllSessions({ light = false } = {}) {
       facet: metaById.get(id)?.facet,
       live: liveById.get(id),
       dead: deadIds.has(id),
+      copies: copies.get(id),
     };
     const s = await buildSessionSafe(id, { ...input, history, now, read });
     if (!s) continue;
