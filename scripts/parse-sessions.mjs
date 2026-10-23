@@ -30,7 +30,7 @@ import {
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
 import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
 import { freshest } from "./provider-limits.mjs";
-import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, setModelOverrides } from "./models.mjs";
+import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
@@ -134,10 +134,9 @@ export function liveStateOf({ live, pending, lastCall = null, lastText, lastTs, 
   return { state: "your-turn", text: lastText, since: iso(live?.statusAt ?? lastTs) };
 }
 
-const costFor = costOf;
-/** Priced per turn when available, so sessions that switch models cost right. */
+/** Priced per turn when available, so sessions that switch models cost right; totals alone at the base tier. */
 const sessionCost = (model, tokens, turns) =>
-  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costFor(model, tokens);
+  turns?.length ? turns.reduce((sum, tu) => sum + costOf(tu.model ?? model, tu.tokens), 0) : costOf(model, tokens, 0);
 
 /** Model that produced the most output tokens (sessions can switch models). */
 const dominantModel = (turns, fallback) => {
@@ -149,10 +148,11 @@ const dominantModel = (turns, fallback) => {
   return best;
 };
 
-const baselineCostFor = (model, tokens) => {
-  const p = priceFor(model);
+/** What the tokens would cost with no prompt cache: every input token at the full input rate. */
+const baselineCostFor = (model, tokens, prompt) => {
   const t = tokens || {};
-  const allInput = (t.input ?? 0) + (t.cacheRead ?? 0) + (t.cacheWrite ?? 0);
+  const allInput = promptTokens(t);
+  const p = priceFor(model, prompt ?? allInput);
   return (allInput / 1e6) * p.in + ((t.output ?? 0) / 1e6) * p.out;
 };
 
@@ -292,35 +292,6 @@ async function readCaptureFile(file, startedAtMs) {
   return { entries, count: entries.length, lastTsMs, stopTsMs };
 }
 
-function mergeToolSequences(transcriptSeq, pluginSeq) {
-  if (pluginSeq.length === 0) return transcriptSeq;
-  if (transcriptSeq.length === 0) return pluginSeq;
-  const tagged = [
-    ...transcriptSeq.map((e) => ({ ...e, _src: e.source ?? "transcript" })),
-    ...pluginSeq.map((e) => ({ ...e, _src: "plugin" })),
-  ];
-  tagged.sort((a, b) => a.t - b.t);
-  const out = [];
-  for (const e of tagged) {
-    const prev = out[out.length - 1];
-    if (prev && prev.tool === e.tool && Math.abs(prev.t - e.t) < 500) {
-      // duplicate within 500ms — prefer transcript (richer fields)
-      if (prev._src === "transcript" && e._src === "plugin") continue;
-      if (prev._src === "plugin" && e._src === "transcript") {
-        out[out.length - 1] = e;
-        continue;
-      }
-    }
-    out.push(e);
-  }
-  return out.map((e) => {
-    // strip the internal tag, keep `source` only when it's "plugin"
-    const { _src, ...rest } = e;
-    if (_src === "plugin") rest.source = "plugin";
-    return rest;
-  });
-}
-
 /** Read history.jsonl line-by-line, group user messages by sessionId. */
 async function readHistoryBySession() {
   const bySession = new Map();
@@ -389,11 +360,19 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude", l
     if (hit.parser && Date.now() - st.mtimeMs > HOT_MS) hit.parser = null;
     return hit.data;
   }
-  if (cached && light && agent === "claude") return readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
-  const parsed =
-    agent === "codex" ? await parseCodexRollout(path)
-    : agent === "copilot" ? await parseCopilotEvents(path)
-    : await parseTranscriptFile(path, sidechain);
+  let parsed;
+  try {
+    if (cached && light && agent === "claude") return await readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
+    parsed =
+      agent === "codex" ? await parseCodexRollout(path)
+      : agent === "copilot" ? await parseCopilotEvents(path)
+      : await parseTranscriptFile(path, sidechain);
+  } catch (err) {
+    // Deleted between the stat and the read, or unreadable: no transcript, like a failed stat.
+    transcriptCache.delete(path);
+    warnOnce(path, `[marey] could not read ${path}: ${err.message}`);
+    return null;
+  }
   if (!cached) return parsed;
   const data = light ? lightTranscript(parsed) : parsed;
   transcriptCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, light, data });
@@ -489,6 +468,8 @@ function createTranscriptParser(sidechain) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const turnById = new Map();
@@ -529,12 +510,13 @@ function createTranscriptParser(sidechain) {
   const quality = sidechain ? null : createQualityTracker();
 
   function line(j) {
+    // Valid JSON that is not a record (`null`, a number) is skipped like an unreadable line.
+    if (!j || typeof j !== "object") return;
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
-    if (!customTitle && j.type === "custom-title" && typeof j.customTitle === "string") {
-      customTitle = j.customTitle;
-    }
+    // The latest title wins: `/rename` appends a new one.
+    if (j.type === "custom-title" && typeof j.customTitle === "string") customTitle = j.customTitle;
     if (j.type === "attachment") {
       if (j.attachment?.type === "instructions") context.instructions(j.timestamp ? new Date(j.timestamp).getTime() : null, j.attachment.files);
       else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
@@ -584,6 +566,7 @@ function createTranscriptParser(sidechain) {
       }
       const content = Array.isArray(msg.content) ? msg.content : [];
       for (const c of content) {
+        if (!c || typeof c !== "object") continue;
         if (c.type === "text" && typeof c.text === "string") {
           turn.outBytes += c.text.length;
           if (!turn.outPreview) turn.outPreview = clip(c.text, 240);
@@ -627,7 +610,7 @@ function createTranscriptParser(sidechain) {
           toolSequence.push(entry);
         }
       }
-      if (content.some((c) => c.type === "tool_use")) ended = false;
+      if (content.some((c) => c?.type === "tool_use")) ended = false;
       else if (msg.stop_reason === "end_turn") ended = true;
     } else if (msg.role === "user") {
       if (j.isCompactSummary) quality?.onCompaction();
@@ -672,8 +655,9 @@ function createTranscriptParser(sidechain) {
         if (textPart?.text) text = textPart.text;
       } else return;
       ended = !!text && INTERRUPTED_RE.test(text);
-      // Sub-agent transcripts start with the parent's instructions, not a user prompt.
-      if (sidechain || (text && NON_PROMPT_RE.test(text))) {
+      // Sub-agent transcripts start with the parent's instructions, not a user prompt. Older Claude Code
+      // versions wrote sub-agent lines inline, flagged `isSidechain`: their tokens count, not as prompts.
+      if (sidechain || j.isSidechain === true || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
         if (sidechain && text && subPrompt === null) {
           subPrompt = clip(text, 1500);
@@ -688,8 +672,9 @@ function createTranscriptParser(sidechain) {
         pendingInPreview = text.slice(0, 200);
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
-      if (prompts.length < 100 && text) {
-        prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+      if (text) {
+        if (prompts.length < 100) prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+        else promptsCutAt ??= tsMs;
       }
     }
   }
@@ -718,6 +703,7 @@ function createTranscriptParser(sidechain) {
       toolCounts,
       absEvents,
       prompts,
+      promptsCutAt,
       toolSequence: calls,
       turns,
       assistantMessages: turns.length,
@@ -795,11 +781,13 @@ function relativizeToolSequence(seq, startedAt) {
   }));
 }
 
-function relativizeTurns(turns, prompts, startedAt) {
+function relativizeTurns(turns, prompts, startedAt, promptsCutAt = null) {
   return turns.map((tu) => {
     const t = tu.tsMs && startedAt ? Math.max(0, tu.tsMs - startedAt) : 0;
     let promptIdx;
-    for (let i = prompts.length - 1; i >= 0; i--) {
+    // After the last prompt kept, a turn belongs to one that wasn't: to none, not to prompt #100.
+    const cut = promptsCutAt !== null && (tu.tsMs ?? 0) >= promptsCutAt;
+    for (let i = cut ? -1 : prompts.length - 1; i >= 0; i--) {
       const pt = prompts[i].tsMs ?? 0;
       if (pt <= (tu.tsMs ?? 0)) { promptIdx = i; break; }
     }
@@ -826,8 +814,9 @@ export function claudePids(pids) {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // EPERM: alive, owned by another user (sudo).
+      return err.code === "EPERM";
     }
   });
   if (alive.length === 0) return new Set();
@@ -846,18 +835,49 @@ export function claudePids(pids) {
   return found;
 }
 
+const TITLE_TAIL_BYTES = 64 * 1024;
+
+/**
+ * A transcript's latest title, without reading it whole. Claude Code appends the title again as the
+ * session goes on (and `/rename` a new one), so the end of the file has the latest; a title set
+ * once, early in a long file, is in its first lines.
+ */
 async function readCustomTitleFast(path) {
-  // Scan first ~20 lines for a custom-title entry (cheap — don't load whole file).
-  if (!existsSync(path)) return null;
-  let i = 0;
-  for await (const line of jsonlLines(path)) {
-    i++;
-    if (i > 50) break;
-    if (!line.trim()) continue;
+  const titleOf = (line) => {
+    if (!line.includes("custom-title")) return null;
     try {
       const j = JSON.parse(line);
-      if (j.type === "custom-title" && typeof j.customTitle === "string") return j.customTitle;
-    } catch { /* skip */ }
+      return j?.type === "custom-title" && typeof j.customTitle === "string" ? j.customTitle : null;
+    } catch {
+      return null; // the cut first line of the tail, or a line being written
+    }
+  };
+  try {
+    const fh = await open(path, "r");
+    let tail;
+    let size;
+    try {
+      ({ size } = await fh.stat());
+      const n = Math.min(size, TITLE_TAIL_BYTES);
+      const buf = Buffer.alloc(n);
+      await fh.read(buf, 0, n, size - n);
+      tail = buf.toString("utf8").split("\n");
+    } finally {
+      await fh.close();
+    }
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const title = titleOf(tail[i]);
+      if (title) return title;
+    }
+    if (size <= TITLE_TAIL_BYTES) return null;
+    let i = 0;
+    for await (const line of jsonlLines(path)) {
+      if (++i > 50) break;
+      const title = titleOf(line);
+      if (title) return title;
+    }
+  } catch {
+    /* gone or unreadable: no title */
   }
   return null;
 }
@@ -1031,7 +1051,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
 
   const mainTurns = t?.turns ?? [];
   const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns)].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
-  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs);
+  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs, t?.promptsCutAt ?? null);
 
   const toolCounts = {};
   for (const src of [t, ...subs]) {
@@ -1077,8 +1097,11 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     messages: t ? t.assistantMessages + t.userMessages : (meta?.user_message_count ?? 0) + (meta?.assistant_message_count ?? 0),
     toolCounts,
     tokens,
-    costUsd: allTurns.length ? sessionCost(model, tokens, allTurns) : costOf(model, tokens),
-    baselineCostUsd: baselineCostFor(model, tokens),
+    costUsd: sessionCost(model, tokens, allTurns),
+    // Per turn too, so sub-agents on another model are compared at their own rates.
+    baselineCostUsd: allTurns.length
+      ? allTurns.reduce((sum, tu) => sum + baselineCostFor(tu.model ?? model, tu.tokens), 0)
+      : baselineCostFor(model, tokens, 0),
     frictions: isLive ? [] : mapFrictions(facet),
     timeline: light ? [] : t ? relativizeEvents(t.absEvents, startedAtMs) : meta ? metaTimeline(meta, startedAtMs) : [],
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
@@ -1102,7 +1125,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     prompts: relativizePrompts(t?.prompts ?? [], startedAtMs),
     // Sub-agent calls nested under the call that started each sub-agent: every call listed once.
     toolSequence: light ? [] : nestSubagentCalls(
-      mergeToolSequences(relativizeToolSequence(t?.toolSequence ?? [], startedAtMs), pluginCache.entries),
+      // The hook's calls only stand in for a missing transcript: next to one they are all duplicates
+      // (a sub-agent's calls among them), which no timestamp match can tell apart.
+      t ? relativizeToolSequence(t.toolSequence ?? [], startedAtMs) : pluginCache.entries,
       subs.map((sub) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
@@ -1385,7 +1410,7 @@ export async function parseAllSessions({ light = false } = {}) {
   const errorList = [];
   for (const file of (await readDirSafe(META_DIR)).filter((f) => f.endsWith(".json"))) {
     const meta = await readJsonSafe(join(META_DIR, file));
-    if (!meta || !meta.session_id || !meta.start_time) { errorList.push(file); continue; }
+    if (!meta || !meta.session_id || !Number.isFinite(Date.parse(meta.start_time))) { errorList.push(file); continue; }
     const facet = facetsSet.has(file) ? await readJsonSafe(join(FACETS_DIR, file)) : null;
     metaById.set(meta.session_id, { meta, facet });
   }
@@ -1400,7 +1425,7 @@ export async function parseAllSessions({ light = false } = {}) {
       live: liveById.get(id),
       dead: deadIds.has(id),
     };
-    const s = await buildSession(id, { ...input, history, now, read });
+    const s = await buildSessionSafe(id, { ...input, history, now, read });
     if (!s) continue;
     all.push(s);
     inputs.set(id, input);
@@ -1425,7 +1450,7 @@ export async function parseAllSessions({ light = false } = {}) {
     const entry = codexIndex.get(id);
     const live = (await isCodexLive(entry.path, t, codexRunning, now)) ? { isLive: true, cwd: t.cwd } : undefined;
     const children = codexChildren.get(id) ?? [];
-    const s = await buildSession(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
+    const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read, codexChildren: children.map((c) => codexParsed.get(c)) });
     if (!s) continue;
     all.push(s);
     inputs.set(id, { entry, live, dead: false, codexChildEntries: children.map((c) => codexIndex.get(c)) });
@@ -1444,7 +1469,7 @@ export async function parseAllSessions({ light = false } = {}) {
       copilotParsed.push(t);
       const isLive = entry.pids.some((pid) => pids.has(pid));
       const live = isLive ? { isLive: true, cwd: entry.cwd ?? t.cwd, liveState: copilotLiveState(t, open.get(id), now) } : undefined;
-      const s = await buildSession(id, { entry, live, dead: false, history, now, read });
+      const s = await buildSessionSafe(id, { entry, live, dead: false, history, now, read });
       if (!s) continue;
       all.push(s);
       inputs.set(id, { entry, live, dead: false });
@@ -1461,6 +1486,24 @@ export async function parseAllSessions({ light = false } = {}) {
   buildInputs = inputs;
 
   return { sessions: all, errors: errorList, modelOverrides, readings };
+}
+
+const warned = new Set();
+/** Each problem is logged once per server run, not on every parse. */
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(message);
+}
+
+/** A session that fails to build (a record the parser doesn't expect) is left out, not the whole parse. */
+async function buildSessionSafe(id, opts) {
+  try {
+    return await buildSession(id, opts);
+  } catch (err) {
+    warnOnce(id, `[marey] skipped session ${id}: ${err.message}`);
+    return null;
+  }
 }
 
 /** What the last parse built each session from, for `sessionDetail`. */

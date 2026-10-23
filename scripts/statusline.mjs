@@ -11,7 +11,7 @@
  *   2. writes a sanitized per-session snapshot (context size, prompt-cache state) to
  *      ~/.claude/marey/live/<session_id>.json for the dashboard,
  *   3. hands the untouched payload to the user's previous status line command
- *      (saved by install-statusline.mjs), or prints a minimal line if none, and appends
+ *      (saved by install-statusline.mjs, given 3 s), or prints a minimal line if none, and appends
  *      a short context / cache segment with a "compact? clear?" hint. Turn that segment
  *      off with {"verdict": false} in ~/.claude/marey/statusline.json.
  *
@@ -19,7 +19,7 @@
  * Must stay fast and never fail: the status line renders on every turn.
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,12 @@ const LIMITS = join(DIR, "limits.json");
 const HISTORY = join(DIR, "limits-history.jsonl");
 const LIVE = join(DIR, "live");
 const HISTORY_MAX_BYTES = 512 * 1024;
+// Owner-only, like the plugin hook's cache: snapshots are named by session id.
+const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
+/** Set for the previous command, so a wrapper it leads back to doesn't run it again. */
+const NESTED = "MAREY_STATUSLINE";
+const PREVIOUS_TIMEOUT_MS = 3000;
 
 // Shared with the dashboard. Installed next to this file; if it is missing (older install),
 // the context features are skipped and the rest keeps working.
@@ -68,7 +74,7 @@ function freshest(held, read, now) {
 function appendHistory(held, cur) {
   const pick = (rl) => JSON.stringify({ five: win(rl.five_hour), seven: win(rl.seven_day) });
   if (held && pick(held) === pick(cur)) return;
-  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), five: win(cur.five_hour), seven: win(cur.seven_day) }) + "\n");
+  appendFileSync(HISTORY, JSON.stringify({ t: Date.now(), five: win(cur.five_hour), seven: win(cur.seven_day) }) + "\n", { mode: FILE_MODE });
   if (statSync(HISTORY).size > HISTORY_MAX_BYTES) {
     const lines = readFileSync(HISTORY, "utf8").split("\n").filter(Boolean);
     writeFileSync(HISTORY, lines.slice(Math.floor(lines.length / 2)).join("\n") + "\n");
@@ -79,7 +85,7 @@ function appendHistory(held, cur) {
 function record(payload) {
   if (!payload?.rate_limits) return;
   try {
-    mkdirSync(DIR, { recursive: true });
+    mkdirSync(DIR, { recursive: true, mode: DIR_MODE });
     let held = null;
     try {
       held = JSON.parse(readFileSync(LIMITS, "utf8")).rate_limits ?? null;
@@ -95,7 +101,7 @@ function record(payload) {
     }
     appendHistory(held, cur);
     const tmp = join(DIR, `limits.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: cur }));
+    writeFileSync(tmp, JSON.stringify({ capturedAt: Date.now(), rate_limits: cur }), { mode: FILE_MODE });
     renameSync(tmp, LIMITS);
   } catch {
     /* never break the status line */
@@ -105,9 +111,9 @@ function record(payload) {
 function writeSnapshot(snap) {
   if (!snap) return;
   try {
-    mkdirSync(LIVE, { recursive: true });
+    mkdirSync(LIVE, { recursive: true, mode: DIR_MODE });
     const tmp = join(LIVE, `${snap.sessionId}.json.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify(snap));
+    writeFileSync(tmp, JSON.stringify(snap), { mode: FILE_MODE });
     renameSync(tmp, join(LIVE, `${snap.sessionId}.json`));
   } catch {
     /* never break the status line */
@@ -198,15 +204,24 @@ try {
 } catch {
   /* pass through untouched */
 }
+
+// Run by our own previous command: it was saved pointing back at this wrapper (its path spelled
+// another way), which would spawn itself forever. The outer run records and adds the segments.
+if (process.env[NESTED]) {
+  process.stdout.write(fallbackLine(payload));
+  process.exit(0);
+}
+
 record(payload);
 const snap = advice ? advice.toSnapshot(payload) : null;
 writeSnapshot(snap);
 
 // The previous command can break (e.g. a plugin update moves its versioned
-// path): if it fails or prints nothing, show our own line instead of a blank one.
+// path): if it fails, hangs or prints nothing, show our own line instead of a blank one.
 const next = previousCommand();
 if (next) {
-  const child = spawn(next, { shell: true, stdio: ["pipe", "pipe", "ignore"] });
+  // Not detached: a status line that reads the terminal's width (`/dev/tty`) needs to stay in its session.
+  const child = spawn(next, { shell: true, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, [NESTED]: "1" } });
   let out = "";
   let done = false;
   const finish = (ok) => {
@@ -215,6 +230,16 @@ if (next) {
     process.stdout.write(withVerdict(ok && out.trim() ? out : fallbackLine(payload), snap));
     process.exit(0);
   };
+  setTimeout(() => {
+    try {
+      // What the shell started first (`pkill -P`: its children), then the shell.
+      if (process.platform !== "win32") spawnSync("pkill", ["-KILL", "-P", String(child.pid)]);
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+    finish(false);
+  }, PREVIOUS_TIMEOUT_MS);
   child.stdout.on("data", (c) => { out += c; });
   child.on("error", () => finish(false));
   child.on("close", (code) => finish(code === 0));

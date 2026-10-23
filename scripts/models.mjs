@@ -5,7 +5,9 @@
  *
  * Prices are USD per million tokens (Anthropic and OpenAI first-party API
  * rates). Cache writes are derived from the input rate: 1.25x (5-minute TTL),
- * 2x (1-hour TTL). Cache reads vary by model, so they are listed.
+ * 2x (1-hour TTL). Cache reads vary by model, so they are listed. A row with
+ * `longPrompt` bills a request whose prompt (input + cache reads + cache
+ * writes) is over `over` tokens at that tier instead (Haiku 5.5).
  *
  * When Anthropic or OpenAI ships a model: add a row here. Unknown ids still get a
  * readable name (see normalizeModel) and the latest price of their family.
@@ -20,10 +22,19 @@ export const MODELS = {
   "opus-4.8":   { label: "Opus 4.8",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.7":   { label: "Opus 4.7",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.6":   { label: "Opus 4.6",   in: 5,  out: 25, cacheRead: 0.5 },
-  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.2 },
+  "opus-4.5":   { label: "Opus 4.5",   in: 5,  out: 25, cacheRead: 0.5 },
+  "opus-4.1":   { label: "Opus 4.1",   in: 15, out: 75, cacheRead: 1.5 },
+  "opus-4":     { label: "Opus 4",     in: 15, out: 75, cacheRead: 1.5 },
+  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.1 },
   "sonnet-5":   { label: "Sonnet 5",   in: 2,  out: 10, cacheRead: 0.2 },
   "sonnet-4.6": { label: "Sonnet 4.6", in: 3,  out: 15, cacheRead: 0.3 },
+  "sonnet-4.5": { label: "Sonnet 4.5", in: 3,  out: 15, cacheRead: 0.3 },
+  "sonnet-4":   { label: "Sonnet 4",   in: 3,  out: 15, cacheRead: 0.3 },
+  "haiku-5.5":  { label: "Haiku 5.5",  in: 0.1, out: 0.5, cacheRead: 0.01, longPrompt: { over: 100_000, in: 0.5, out: 2.5, cacheRead: 0.05 } },
   "haiku-4.5":  { label: "Haiku 4.5",  in: 1,  out: 5,  cacheRead: 0.1 },
+  "haiku-3.5":  { label: "Haiku 3.5",  in: 0.8, out: 4, cacheRead: 0.08 },
+  // Retired 3.x models (Sonnet 3.7 / 3.5, Opus 3, Haiku 3) have no published price any more:
+  // they fall back to their family's latest, marked as an estimate.
   // OpenAI rows: developers.openai.com/api/docs/models/<id>. Prompts over 272k
   // input tokens and fast mode cost more; not modelled (no tier in rollouts).
   "gpt-6-astra":   { label: "GPT-6 Astra",   in: 10,  out: 50,  cacheRead: 1 },
@@ -37,7 +48,7 @@ export const MODELS = {
   "gpt-5.4":       { label: "GPT-5.4",       in: 2.5, out: 15,  cacheRead: 0.25 },
 };
 
-const BUILTIN = Object.fromEntries(Object.entries(MODELS).map(([k, v]) => [k, { ...v }]));
+const BUILTIN = Object.fromEntries(Object.entries(MODELS).map(([k, v]) => [k, structuredClone(v)]));
 
 export const DEFAULT_MODEL = "opus-5.5";
 
@@ -47,7 +58,7 @@ const FAMILY_LATEST = {
   mythos: "mythos-5.1",
   opus: "opus-5.5",
   sonnet: "sonnet-5.5",
-  haiku: "haiku-4.5",
+  haiku: "haiku-5.5",
   gpt: "gpt-5.4",
   // Codex's internal models (codex-auto-review): priced like GPT, not like the default.
   codex: "gpt-5.4",
@@ -55,15 +66,19 @@ const FAMILY_LATEST = {
 
 /**
  * `claude-opus-5-5[1m]` → `opus-5.5`, `claude-haiku-4-5-20251001` → `haiku-4.5`,
- * `opus[1m]` → `opus-5.5`. Returns null for non-model markers like `<synthetic>`.
+ * `opus[1m]` → `opus-5.5`, `claude-sonnet-4-0` → `sonnet-4`, and the 3.x order
+ * `claude-3-7-sonnet-20250219` → `sonnet-3.7`. Returns null for non-model markers
+ * like `<synthetic>`.
  */
 export function normalizeModel(id) {
   if (!id || typeof id !== "string" || id.startsWith("<")) return null;
   const m = id.toLowerCase().replace(/^claude-/, "").replace(/\[.*\]$/, "").replace(/-\d{8}$/, "");
   if (FAMILY_LATEST[m]) return FAMILY_LATEST[m];
   const parts = m.match(/^([a-z]+)-(\d+)(?:-(\d+))?$/);
-  if (!parts) return m;
-  return parts[3] ? `${parts[1]}-${parts[2]}.${parts[3]}` : `${parts[1]}-${parts[2]}`;
+  const old = parts ? null : m.match(/^(\d+)(?:-(\d+))?-([a-z]+)$/);
+  const [family, major, minor] = parts ? [parts[1], parts[2], parts[3]] : old ? [old[3], old[1], old[2]] : [];
+  if (!family) return m;
+  return minor && minor !== "0" ? `${family}-${major}.${minor}` : `${family}-${major}`;
 }
 
 /**
@@ -74,7 +89,7 @@ export function normalizeModel(id) {
  */
 export function setModelOverrides(overrides) {
   for (const k of Object.keys(MODELS)) delete MODELS[k];
-  for (const [k, v] of Object.entries(BUILTIN)) MODELS[k] = { ...v };
+  for (const [k, v] of Object.entries(BUILTIN)) MODELS[k] = structuredClone(v);
   const accepted = {};
   if (!overrides || typeof overrides !== "object") return accepted;
   for (const [key, v] of Object.entries(overrides)) {
@@ -92,9 +107,18 @@ export function isKnownModel(model) {
   return !!model && Object.hasOwn(MODELS, model);
 }
 
-/** Per-token-kind prices ($/MTok). `cacheWrite` is the 5-minute rate. */
-export function priceFor(model) {
-  const p = MODELS[model] ?? MODELS[FAMILY_LATEST[String(model).split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
+/** What a request's prompt counts for a `longPrompt` tier: its input, cache reads and cache writes. */
+export function promptTokens(t) {
+  return (t?.input ?? 0) + (t?.cacheRead ?? 0) + (t?.cacheWrite ?? 0);
+}
+
+/**
+ * Per-token-kind prices ($/MTok). `cacheWrite` is the 5-minute rate. `prompt` is one request's prompt
+ * size (`promptTokens`): past a model's `longPrompt.over`, that tier applies.
+ */
+export function priceFor(model, prompt = 0) {
+  const row = MODELS[model] ?? MODELS[FAMILY_LATEST[String(model).split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
+  const p = row.longPrompt && prompt > row.longPrompt.over ? row.longPrompt : row;
   return { in: p.in, out: p.out, cacheRead: p.cacheRead, cacheWrite: p.in * 1.25, cacheWrite1h: p.in * 2 };
 }
 
@@ -113,12 +137,14 @@ export function modelFamily(model) {
 }
 
 /**
- * Cost in USD. Uses the 5m / 1h cache-write split when the token bundle has
- * it (`cacheWrite5m`, `cacheWrite1h`); any remainder is billed at the 5m rate.
+ * Cost in USD of one request's usage (a turn): a model with a `longPrompt` tier is priced from that
+ * request's prompt size, so a sum of several requests must be priced turn by turn, or with `prompt`
+ * 0 (the base tier) when there are no turns. Uses the 5m / 1h cache-write split when the token
+ * bundle has it (`cacheWrite5m`, `cacheWrite1h`); any remainder is billed at the 5m rate.
  */
-export function costOf(model, t) {
+export function costOf(model, t, prompt = promptTokens(t)) {
   if (!t) return 0;
-  const p = priceFor(model);
+  const p = priceFor(model, prompt);
   const cw = t.cacheWrite ?? 0;
   const cw1h = Math.min(cw, t.cacheWrite1h ?? 0);
   return (

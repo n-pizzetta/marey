@@ -7,6 +7,7 @@ import { ParseErrors } from "./ParseErrors";
 import { ProfileMenu } from "./ProfileMenu";
 import { UpdateNotice } from "./UpdateNotice";
 import type { Agent } from "../types";
+import type { DataSource } from "../data/loadSessions";
 import type { Provider } from "../utils/providers";
 import { ProviderSwitcher } from "./ProviderSwitcher";
 import { LimitsPill } from "./LimitsGauge";
@@ -27,7 +28,7 @@ interface Props {
   needsYou: number;
   /** Sessions in the scope, shown on the Sessions tab. */
   sessionCount: number;
-  source: "real" | "mock";
+  source: DataSource;
   generatedAt?: string;
   reportStatus: ReportStatus;
   parseErrors?: string[];

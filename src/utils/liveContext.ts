@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react";
 import type { ContextSnapshot } from "../../scripts/context-advice.mjs";
+import type { Session } from "../types";
 
 const POLL_MS = 5_000;
 /** Snapshots only refresh with activity; older ones are not shown (the cache is long gone). */
@@ -47,4 +48,14 @@ export function useLiveContext(): ContextSnapshot[] {
 export function useSnapshotMap(): Map<string, ContextSnapshot> {
   const list = useLiveContext();
   return useMemo(() => new Map(list.map((s) => [s.sessionId, s])), [list]);
+}
+
+/**
+ * The snapshot a session shows as live (context line, cache countdown, advice): only while it runs.
+ * A closed session's snapshot stays on disk for days (`applyContextWindows` reads its window size),
+ * but a countdown or a "clear" for a session that no longer runs means nothing. The list sizes its
+ * rows on this too, so the row height and the line it holds always agree.
+ */
+export function liveSnapshot(s: Pick<Session, "id" | "live">, snaps: Map<string, ContextSnapshot>): ContextSnapshot | undefined {
+  return s.live ? snaps.get(s.id) : undefined;
 }

@@ -3,9 +3,11 @@ import type { Session } from "../../types";
 import { aggregateByPrompt, type PromptStats } from "../../utils/aggregateByPrompt";
 import { cacheHit, inputTokens } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
+import { rangeStart, type Range } from "../../utils/range";
 
 interface Props {
   sessions: Session[];
+  range: Range;
   onSelectSession: (id: string) => void;
   limit?: number;
 }
@@ -26,20 +28,23 @@ function hitColor(hit: number): string {
   return "var(--c-red)";
 }
 
-export function HeavyPrompts({ sessions, onSelectSession, limit = 10 }: Props) {
+export function HeavyPrompts({ sessions, range, onSelectSession, limit = 10 }: Props) {
   const top = useMemo(() => {
     type Row = { session: Session; stat: PromptStats };
     const all: Row[] = [];
+    // A session started before the range only brings the turns it ran inside it.
+    const fromMs = rangeStart(range)?.getTime() ?? -Infinity;
     for (const s of sessions) {
       if (!s.turns || !s.prompts || s.turns.length === 0 || s.prompts.length === 0) continue;
-      const stats = aggregateByPrompt(s.turns, s.model, s.prompts);
+      const base = new Date(s.startedAt).getTime();
+      const stats = aggregateByPrompt(s.turns.filter((t) => base + t.t >= fromMs), s.model, s.prompts);
       for (const st of stats) {
         if (st.cost > 0) all.push({ session: s, stat: st });
       }
     }
     all.sort((a, b) => b.stat.cost - a.stat.cost);
     return all.slice(0, limit);
-  }, [sessions, limit]);
+  }, [sessions, range, limit]);
 
   if (top.length === 0) {
     return (

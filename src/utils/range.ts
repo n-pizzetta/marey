@@ -1,5 +1,8 @@
-import type { Session } from "../types";
-import { costOfTokens } from "./fleetStats";
+import type { Session, ToolName } from "../types";
+import { costOf } from "../../scripts/models.mjs";
+
+/** Gaps longer than this are idle, not active time: `IDLE_CAP_MS` in scripts/transcript-utils.mjs. */
+const IDLE_CAP_MS = 5 * 60_000;
 
 export type Range = "today" | "7d" | "30d" | "all";
 
@@ -37,7 +40,10 @@ export function filterByRange(sessions: Session[], range: Range, now: Date = new
  * Sessions with tokens and cost restricted to the turns inside the range, and
  * per-model usage (sessions can switch models). Aggregates (header totals,
  * fleet cards) use these; a session started before the range only contributes
- * what it spent inside it. Sessions without turns keep their totals.
+ * what it spent inside it, its tool calls and active time included (the latter
+ * from its turns and prompts: close to the parser's, which counts every event).
+ * Sessions without turns keep their totals. Turns stay whole: a widget that
+ * reads them filters by `rangeStart` itself.
  */
 export function scopeToRange(sessions: Session[], range: Range, now: Date = new Date()): Session[] {
   const fromMs = rangeStart(range, now)?.getTime() ?? null;
@@ -49,10 +55,17 @@ export function scopeToRange(sessions: Session[], range: Range, now: Date = new 
     const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     const modelUsage: NonNullable<Session["modelUsage"]> = {};
     let costUsd = 0;
+    const partial = fromMs !== null && base < fromMs;
+    const toolCounts = {} as Record<ToolName, number>;
+    const times: number[] = [];
     for (const t of s.turns) {
       if (fromMs !== null && base + t.t < fromMs) continue;
+      if (partial) {
+        for (const tool of t.tools) toolCounts[tool as ToolName] = (toolCounts[tool as ToolName] ?? 0) + 1;
+        times.push(t.t);
+      }
       const model = t.model ?? s.model;
-      const cost = costOfTokens(model, t.tokens);
+      const cost = costOf(model, t.tokens);
       tokens.input += t.tokens.input;
       tokens.output += t.tokens.output;
       tokens.cacheRead += t.tokens.cacheRead;
@@ -62,7 +75,12 @@ export function scopeToRange(sessions: Session[], range: Range, now: Date = new 
       m.tokens += sumAll(t.tokens);
       m.cost += cost;
     }
-    return { ...s, tokens, costUsd, modelUsage };
+    if (!partial) return { ...s, tokens, costUsd, modelUsage };
+    for (const pr of s.prompts ?? []) if (base + pr.t >= fromMs) times.push(pr.t);
+    times.sort((a, b) => a - b);
+    let activeMs = 0;
+    for (let i = 1; i < times.length; i++) activeMs += Math.min(times[i] - times[i - 1], IDLE_CAP_MS);
+    return { ...s, tokens, costUsd, modelUsage, toolCounts, durationMs: Math.max(1, activeMs) };
   });
 }
 

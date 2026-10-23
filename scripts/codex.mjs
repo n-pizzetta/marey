@@ -202,6 +202,8 @@ export async function parseCodexRollout(path) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const resultById = new Map();
@@ -251,6 +253,7 @@ export async function parseCodexRollout(path) {
     pending.inPreview = text.slice(0, 200);
     absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
     if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+    else promptsCutAt ??= tsMs;
   };
 
   const toolInput = (p) => {
@@ -570,6 +573,7 @@ export async function parseCodexRollout(path) {
     toolCounts,
     absEvents,
     prompts,
+    promptsCutAt,
     toolSequence,
     turns,
     assistantMessages: turns.length,

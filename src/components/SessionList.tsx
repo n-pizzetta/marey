@@ -6,7 +6,7 @@ import { projectColor } from "../utils/fleetStats";
 import { PRODUCT_NAME } from "../utils/brand";
 import { API_VALUE_HINT, freshTokens, formatUsage, useUnit } from "../utils/units";
 import { ContextLine } from "./ContextCard";
-import { useSnapshotMap } from "../utils/liveContext";
+import { liveSnapshot, useSnapshotMap } from "../utils/liveContext";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { useNow } from "../utils/useNow";
 import type { ContextSnapshot } from "../../scripts/context-advice.mjs";
@@ -32,7 +32,7 @@ interface Props {
 }
 
 const ROW_HEIGHT = 40;
-/** Rows with a live context / cache line are taller. */
+/** Rows with a live context / cache line (`liveSnapshot`) are taller. */
 const ROW_HEIGHT_CTX = 62;
 const HEAD_HEIGHT = 32;
 const OVERSCAN_PX = 8 * ROW_HEIGHT;
@@ -68,7 +68,7 @@ function buildItems(sessions: Session[], snaps: Map<string, ContextSnapshot>, gr
       top += HEAD_HEIGHT;
     }
     for (const s of g.rows) {
-      const h = snaps.has(s.id) ? ROW_HEIGHT_CTX : ROW_HEIGHT;
+      const h = liveSnapshot(s, snaps) ? ROW_HEIGHT_CTX : ROW_HEIGHT;
       items.push({ kind: "row", s, top, h });
       top += h;
     }
@@ -226,7 +226,7 @@ export function SessionList({
                 const checked = !!compareIds?.has(s.id);
                 const full = compareMode && !checked && !!compareLimit && (compareIds?.size ?? 0) >= compareLimit;
                 const activate = () => (compareMode ? onToggleCompare?.(s.id) : onSelect(s.id));
-                const snap = snapshots.get(s.id);
+                const snap = liveSnapshot(s, snapshots);
                 return (
                   <div
                     key={s.id}
@@ -349,7 +349,7 @@ export function BulkGhostBar({
   };
   const bulkDelete = async () => {
     if (!onBulkDelete || selectedInView.length === 0) return;
-    if (!confirm(`Delete ${selectedInView.length} ghost session(s) permanently?\n\nRemoves the transcript jsonl + any stale live file. Cannot be undone.`)) return;
+    if (!confirm(`Delete ${selectedInView.length} ghost session(s)?\n\nMoves the transcripts to ~/.claude/marey/trash/ (kept 30 days) and removes any stale live file. Sessions in use again are skipped.`)) return;
     setBusy(true);
     try {
       await onBulkDelete(selectedInView);

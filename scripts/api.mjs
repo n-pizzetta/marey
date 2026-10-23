@@ -9,11 +9,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
-import { promises as fsp, watch, existsSync, readFileSync, statSync, createReadStream } from "node:fs";
+import { promises as fsp, watch, existsSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
+import { claudePids, mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
@@ -28,7 +28,13 @@ const DATA = dataDir(CLAUDE);
 /** This install's version, from package.json (the plugin ships it). */
 export const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const PROJECTS = join(CLAUDE, "projects");
-const STALE = join(CLAUDE, "sessions", ".stale");
+const LIVE_FILES = join(CLAUDE, "sessions");
+const STALE = join(LIVE_FILES, ".stale");
+/** Deleted ghosts, kept TRASH_KEEP_MS. */
+const TRASH = join(DATA, "trash");
+const TRASH_KEEP_MS = 30 * 24 * 60 * 60_000;
+/** A ghost whose transcript was written this recently may have been resumed since the last parse. */
+const RECENT_WRITE_MS = 10 * 60_000;
 const FILE_HISTORY = join(CLAUDE, "file-history");
 const META_DIR = join(CLAUDE, "usage-data", "session-meta");
 const META_TRASH = join(META_DIR, ".trash");
@@ -171,7 +177,9 @@ function watchClaude() {
   ];
   for (const dir of dirs) {
     try {
-      watch(dir, { recursive: false }, scheduleParse);
+      // A watched dir removed (EPERM on Windows) emits `error`, which would crash the server
+      // unheard; the periodic refresh keeps the data fresh without the watcher.
+      watch(dir, { recursive: false }, scheduleParse).on("error", (err) => console.warn(`[marey] stopped watching ${dir}: ${err.message}`));
       console.log(`[marey] watching ${dir}`);
     } catch (err) {
       console.warn(`[marey] could not watch ${dir}: ${err.message}`);
@@ -218,22 +226,73 @@ function isForeignRequest(req) {
   }
 }
 
-async function deleteGhost(sessionId) {
+/**
+ * Why a ghost must be kept after all, or null. The parse that called it a ghost can be seconds
+ * old, so this looks again: a running Claude Code named by a pid file, or a recent write.
+ */
+async function stillInUse(sessionId, transcript) {
+  const pids = [];
+  for (const file of (await readdir(LIVE_FILES).catch(() => [])).filter((f) => f.endsWith(".json"))) {
+    try {
+      const info = JSON.parse(await fsp.readFile(join(LIVE_FILES, file), "utf8"));
+      if (info?.sessionId === sessionId) pids.push(info.pid);
+    } catch { /* not a pid file */ }
+  }
+  if (claudePids(pids).size) return "its Claude Code process is running";
+  try {
+    if (transcript && Date.now() - (await fsp.stat(transcript)).mtimeMs < RECENT_WRITE_MS) return "its transcript was written less than 10 minutes ago";
+  } catch { /* removed meanwhile */ }
+  return null;
+}
+
+/** rename, or copy then remove across file systems (a projects/ folder linked to another disk). */
+async function move(src, dest) {
+  try {
+    await fsp.rename(src, dest);
+  } catch (e) {
+    if (e.code !== "EXDEV") throw e;
+    await fsp.cp(src, dest, { recursive: true });
+    await fsp.rm(src, { recursive: true });
+  }
+}
+
+/** Removes trash entries older than TRASH_KEEP_MS; each name starts with the time it was trashed. */
+async function pruneTrash(now) {
+  for (const name of await readdir(TRASH).catch(() => [])) {
+    if (now - parseInt(name, 10) > TRASH_KEEP_MS) await fsp.rm(join(TRASH, name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Moves a ghost's transcript and sub-agent folder to <data>/trash/<time>-<id>/<project dir>/, unless
+ * it is in use again (`refused`). Under its project dir's name, which can't be rebuilt from the
+ * session's cwd, so putting a session back is one move.
+ */
+export async function deleteGhost(sessionId) {
+  const transcript = await findTranscriptPath(sessionId);
+  const refused = await stillInUse(sessionId, transcript);
+  if (refused) return { refused, removed: [], errors: [] };
+  const now = Date.now();
+  await pruneTrash(now);
   const removed = [];
   const errors = [];
-  const transcript = await findTranscriptPath(sessionId);
   if (transcript) {
-    try { await fsp.unlink(transcript); removed.push(transcript); }
-    catch (e) { errors.push(`transcript: ${e.message}`); }
-  }
-  if (transcript) {
+    const dest = join(TRASH, `${now}-${sessionId}`, basename(dirname(transcript)));
     // <project>/<sessionId>/ holds the session's sub-agent transcripts.
-    const dir = join(dirname(transcript), sessionId);
-    if (existsSync(dir)) {
-      try { await fsp.rm(dir, { recursive: true }); removed.push(dir); }
-      catch (e) { errors.push(`subagents: ${e.message}`); }
+    const subagents = join(dirname(transcript), sessionId);
+    try {
+      await fsp.mkdir(dest, { recursive: true, mode: 0o700 });
+      for (const [what, src] of [["transcript", transcript], ["subagents", subagents]]) {
+        if (what === "subagents" && !existsSync(src)) continue;
+        try { await move(src, join(dest, basename(src))); removed.push(src); }
+        catch (e) { errors.push(`${what}: ${e.message}`); }
+      }
+    } catch (e) {
+      errors.push(`trash: ${e.message}`);
     }
   }
+  // Its markers go only with its transcript: a session left in place stays a ghost.
+  if (errors.length) return { removed, errors };
   for (const p of [join(STALE, `${sessionId}.json`), join(DATA, "cache", `${sessionId}.jsonl`)]) {
     try { await fsp.unlink(p); removed.push(p); } catch { /* may not exist */ }
   }
@@ -257,11 +316,16 @@ function sendJson(res, code, obj) {
 }
 
 
-function serveUsageReport(_req, res) {
+async function serveUsageReport(_req, res) {
   res.setHeader("cache-control", "no-store");
   // Generated HTML with session content, served from the API's origin: no scripts.
   res.setHeader("content-security-policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
-  if (!existsSync(REPORT_HTML)) {
+  // Read whole: a stream's error (unreadable, a folder, removed meanwhile) would crash the server.
+  let report;
+  try {
+    report = await fsp.readFile(REPORT_HTML);
+  } catch (e) {
+    if (e.code !== "ENOENT") return send(res, 500, e.message);
     const html = `<!doctype html><meta charset="utf-8"><title>No insights report yet</title>` +
       `<style>body{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Inter",sans-serif;` +
       `color:#334155;background:#f8fafc;max-width:560px;margin:80px auto;padding:0 24px}` +
@@ -272,8 +336,7 @@ function serveUsageReport(_req, res) {
       `It will be written to <code>~/.claude/usage-data/report.html</code>.</p>`;
     return send(res, 404, html, HTML_TYPE);
   }
-  res.setHeader("content-type", HTML_TYPE);
-  createReadStream(REPORT_HTML).pipe(res);
+  send(res, 200, report, HTML_TYPE);
 }
 
 /**
@@ -444,13 +507,14 @@ async function handleApi(req, res) {
       ? body.ids.filter((x) => typeof x === "string" && SESSION_ID_RE.test(x) && cache.byId.get(x)?.ghost)
       : [];
     if (ids.length === 0) return send(res, 400, "no deletable ghost sessions");
+    // One in use again is skipped (`refused` in its result), not the whole batch.
     const results = [];
     for (const id of ids) {
       const r = await deleteGhost(id);
       results.push({ id, ...r });
     }
     runParser();
-    return sendJson(res, 200, { count: ids.length, results });
+    return sendJson(res, 200, { count: results.filter((r) => !r.refused && !r.errors.length).length, results });
   }
 
   if (url.startsWith("/api/ghost/")) {
@@ -469,7 +533,8 @@ async function handleApi(req, res) {
         : platform() === "win32" ? ["explorer", [`/select,${p}`]]
         : ["xdg-open", [dirname(p)]];
       execFile(opener, args, (err) => {
-        if (err) return send(res, 500, err.message);
+        // explorer exits with 1 even when it opened the folder.
+        if (err && !(platform() === "win32" && err.code === 1)) return send(res, 500, err.message);
         sendJson(res, 200, { revealed: p });
       });
       return;
@@ -479,6 +544,7 @@ async function handleApi(req, res) {
       if (!cache.byId.get(sessionId)?.ghost) return send(res, 409, "not a ghost session");
       const result = await deleteGhost(sessionId);
       runParser();
+      if (result.refused) return send(res, 409, result.refused);
       return sendJson(res, result.errors.length ? 500 : 200, result);
     }
 
@@ -519,7 +585,7 @@ export async function handleRequest(req, res) {
     return true;
   }
   if (path === "/usage-report.html") {
-    serveUsageReport(req, res);
+    await serveUsageReport(req, res);
     return true;
   }
   return false;

@@ -76,6 +76,13 @@ function send(res, code, body) {
   res.end(body);
 }
 
+/** A read error (removed by a rebuild, unreadable) would crash the server unheard: answer 500 instead. */
+function pipeFile(path, res) {
+  createReadStream(path)
+    .on("error", () => (res.headersSent ? res.destroy() : send(res, 500, "could not read file")))
+    .pipe(res);
+}
+
 async function serveStatic(req, res) {
   let urlPath = (req.url || "/").split("?")[0];
   if (urlPath === "/") urlPath = "/index.html";
@@ -90,13 +97,13 @@ async function serveStatic(req, res) {
     const index = join(DIST, "index.html");
     if (existsSync(index)) {
       res.setHeader("content-type", MIME[".html"]);
-      return createReadStream(index).pipe(res);
+      return pipeFile(index, res);
     }
     return send(res, 404, "not found");
   }
   const ext = extname(filePath).toLowerCase();
   res.setHeader("content-type", MIME[ext] || "application/octet-stream");
-  createReadStream(filePath).pipe(res);
+  pipeFile(filePath, res);
 }
 
 async function openBrowser(url) {
@@ -119,7 +126,8 @@ async function main() {
   const server = createServer(async (req, res) => {
     try {
       if (await handleRequest(req, res)) return;
-      return serveStatic(req, res);
+      // Awaited, so a throw (a file removed between its checks) lands in the catch below.
+      return await serveStatic(req, res);
     } catch (e) {
       console.error("[marey] handler error:", e);
       send(res, 500, "internal error");

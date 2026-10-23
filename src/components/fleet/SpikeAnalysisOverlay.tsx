@@ -1,8 +1,10 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Session } from "../../types";
 import type { Spike } from "../../utils/burnTracker";
-import { tokensInWindow, sumTokens, costOfTokens } from "../../utils/fleetStats";
-import { aggregateByPrompt, type PromptStats } from "../../utils/aggregateByPrompt";
+import { sumTokens, costOfTokens } from "../../utils/fleetStats";
+import type { PromptStats } from "../../utils/aggregateByPrompt";
+import { windowBreakdown } from "../../utils/windowBreakdown";
+import { loadSessionDetail } from "../../data/loadSessions";
 import { formatCost, formatDuration, formatTokens } from "../../utils/format";
 import { runHeuristics, type HeuristicHit } from "./SpikeHeuristics";
 
@@ -12,6 +14,9 @@ interface Props {
   onClose: () => void;
   onSelectSession: (id: string) => void;
 }
+
+/** Sessions whose details are fetched for the heuristics: the heaviest in the window. */
+const MAX_DETAILS = 8;
 
 function formatClock(ms: number): string {
   const d = new Date(ms);
@@ -27,35 +32,22 @@ export function SpikeAnalysisOverlay({ spike, sessions, onClose, onSelectSession
 
   const { fromMs, toMs } = spike;
 
-  const sessionsInWindow = useMemo(() => {
-    const rows = sessions
-      .map((s) => {
-        const burn = tokensInWindow([s], fromMs, toMs);
-        return { s, burn };
-      })
-      .filter((r) => sumTokens(r.burn.tokens) > 0)
-      .sort((a, b) => sumTokens(b.burn.tokens) - sumTokens(a.burn.tokens));
-    return rows;
-  }, [sessions, fromMs, toMs]);
+  // Each prompt counts only its turns inside the window, the one still running included.
+  const breakdown = useMemo(() => windowBreakdown(sessions, fromMs, toMs), [sessions, fromMs, toMs]);
+  const sessionsInWindow = breakdown.sessions;
+  const promptsInWindow = breakdown.prompts.slice(0, 10);
 
-  const promptsInWindow = useMemo(() => {
-    type Row = { session: Session; stat: PromptStats };
-    const all: Row[] = [];
-    for (const s of sessions) {
-      if (!s.turns || !s.prompts || s.turns.length === 0 || s.prompts.length === 0) continue;
-      const startMs = new Date(s.startedAt).getTime();
-      const stats = aggregateByPrompt(s.turns, s.model, s.prompts);
-      for (const st of stats) {
-        // prompt window overlaps spike window?
-        const stStart = startMs + st.t;
-        const stEnd = startMs + (isFinite(st.endT) ? st.endT : st.t);
-        if (stEnd < fromMs || stStart > toMs) continue;
-        all.push({ session: s, stat: st });
-      }
-    }
-    all.sort((a, b) => b.stat.cost - a.stat.cost);
-    return all.slice(0, 10);
-  }, [sessions, fromMs, toMs]);
+  // The list has no calls: the heuristics on tool results need the details of the sessions that burned.
+  const [details, setDetails] = useState<Map<string, Session>>(new Map());
+  const burnedIds = sessionsInWindow.slice(0, MAX_DETAILS).map((r) => r.s.id).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    const ids = burnedIds ? burnedIds.split(",") : [];
+    Promise.all(ids.map((id) => loadSessionDetail(id).catch(() => null))).then((list) => {
+      if (!cancelled) setDetails(new Map(list.filter((d): d is Session => !!d).map((d) => [d.id, d])));
+    });
+    return () => { cancelled = true; };
+  }, [burnedIds]);
 
   const toolBreakdown = useMemo(() => {
     const counts = new Map<string, { calls: number; turns: number }>();
@@ -78,17 +70,11 @@ export function SpikeAnalysisOverlay({ spike, sessions, onClose, onSelectSession
   }, [sessions, fromMs, toMs]);
 
   const heuristics: HeuristicHit[] = useMemo(
-    () => runHeuristics(sessions, fromMs, toMs),
-    [sessions, fromMs, toMs],
+    () => runHeuristics(sessionsInWindow.map((r) => details.get(r.s.id) ?? r.s), fromMs, toMs),
+    [sessionsInWindow, details, fromMs, toMs],
   );
 
-  const totalBurn = sessionsInWindow.reduce(
-    (a, r) => ({
-      tokens: a.tokens + sumTokens(r.burn.tokens),
-      cost: a.cost + r.burn.cost,
-    }),
-    { tokens: 0, cost: 0 },
-  );
+  const totalBurn = breakdown.total;
 
   return (
     <div className="spike-analysis-overlay" role="dialog" aria-label="Spike analysis">
@@ -160,7 +146,7 @@ function SpikeSessionsTable({
   totalTokens,
   onSelect,
 }: {
-  rows: Array<{ s: Session; burn: { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }; cost: number } }>;
+  rows: Array<{ s: Session; tokens: number; cost: number }>;
   totalTokens: number;
   onSelect: (id: string) => void;
 }) {
@@ -184,15 +170,14 @@ function SpikeSessionsTable({
           <span className="right">Tokens</span><span className="right">Cost</span><span className="right">% of spike</span>
         </div>
         {rows.map((r, i) => {
-          const tokens = sumTokens(r.burn.tokens);
-          const share = totalTokens > 0 ? (tokens / totalTokens) * 100 : 0;
+          const share = totalTokens > 0 ? (r.tokens / totalTokens) * 100 : 0;
           return (
             <button key={r.s.id} className="spike-table-row spike-sessions-grid" onClick={() => onSelect(r.s.id)}>
               <span className="mono dim tabular">{i + 1}</span>
               <span className="mono spike-cell-trunc">{r.s.project}</span>
               <span className="spike-cell-trunc">{r.s.goal || "—"}</span>
-              <span className="mono tabular right">{formatTokens(tokens)}</span>
-              <span className="mono tabular right" style={{ color: "var(--c-amber)" }}>{formatCost(r.burn.cost)}</span>
+              <span className="mono tabular right">{formatTokens(r.tokens)}</span>
+              <span className="mono tabular right" style={{ color: "var(--c-amber)" }}>{formatCost(r.cost)}</span>
               <span className="mono tabular right">{share.toFixed(1)}%</span>
             </button>
           );

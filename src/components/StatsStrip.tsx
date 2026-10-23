@@ -42,8 +42,11 @@ export function StatsRow({ sessions, totalInRange, range, activeFilterCount }: S
   if (total === 0) {
     return (
       <div className="empty-range">
-        No sessions <span className="mono dim">{rangeLabel(range)}</span>.
-        Try a broader range.
+        {isFiltered && totalInRange > 0 ? (
+          <>No session matches the filters <span className="mono dim">{rangeLabel(range)}</span>. Reset them to see the {totalInRange} in range.</>
+        ) : (
+          <>No sessions <span className="mono dim">{rangeLabel(range)}</span>. Try a broader range.</>
+        )}
       </div>
     );
   }
