@@ -14,7 +14,7 @@ import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { HealthPage } from "./pages/HealthPage";
 import { ContextPage } from "./pages/ContextPage";
-import { loadSessions, loadSessionDetail } from "./data/loadSessions";
+import { loadSessions, loadSessionDetail, type DataSource } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
 import { useRecommendations } from "./utils/recommendations";
@@ -124,7 +124,7 @@ function writeHash(state: PersistedState) {
 function App() {
   const initial = useMemo(() => ({ ...loadPersisted(), ...parseHash() }), []);
   const [allSessions, setAllSessions] = useState<Session[]>([]);
-  const [source, setSource] = useState<"real" | "mock" | "loading">("loading");
+  const [source, setSource] = useState<DataSource | "loading">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | undefined>();
   const [parseErrors, setParseErrors] = useState<string[] | undefined>();
   const [page, setPage] = useState<Page>(initial.page && PAGE_IDS.includes(initial.page) ? initial.page : "now");
@@ -210,9 +210,16 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let hadReal = false;
     async function refresh() {
       const r = await loadSessions();
       if (cancelled) return;
+      // Once real data came, a failed poll (server restart, re-parse hiccup) keeps it and the open session.
+      if (r.source === "mock" && hadReal) {
+        setSource("stale");
+        return;
+      }
+      hadReal ||= r.source === "real";
       registerProjects(r.sessions.map((x) => x.project || "unknown"));
       setAllSessions(r.sessions);
       setSource(r.source);
