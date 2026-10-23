@@ -468,6 +468,8 @@ function createTranscriptParser(sidechain) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const turnById = new Map();
@@ -513,9 +515,8 @@ function createTranscriptParser(sidechain) {
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
-    if (!customTitle && j.type === "custom-title" && typeof j.customTitle === "string") {
-      customTitle = j.customTitle;
-    }
+    // The latest title wins: `/rename` appends a new one.
+    if (j.type === "custom-title" && typeof j.customTitle === "string") customTitle = j.customTitle;
     if (j.type === "attachment") {
       if (j.attachment?.type === "instructions") context.instructions(j.timestamp ? new Date(j.timestamp).getTime() : null, j.attachment.files);
       else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
@@ -654,8 +655,9 @@ function createTranscriptParser(sidechain) {
         if (textPart?.text) text = textPart.text;
       } else return;
       ended = !!text && INTERRUPTED_RE.test(text);
-      // Sub-agent transcripts start with the parent's instructions, not a user prompt.
-      if (sidechain || (text && NON_PROMPT_RE.test(text))) {
+      // Sub-agent transcripts start with the parent's instructions, not a user prompt. Older Claude Code
+      // versions wrote sub-agent lines inline, flagged `isSidechain`: their tokens count, not as prompts.
+      if (sidechain || j.isSidechain === true || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
         if (sidechain && text && subPrompt === null) {
           subPrompt = clip(text, 1500);
@@ -670,8 +672,9 @@ function createTranscriptParser(sidechain) {
         pendingInPreview = text.slice(0, 200);
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
-      if (prompts.length < 100 && text) {
-        prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+      if (text) {
+        if (prompts.length < 100) prompts.push({ tsMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+        else promptsCutAt ??= tsMs;
       }
     }
   }
@@ -700,6 +703,7 @@ function createTranscriptParser(sidechain) {
       toolCounts,
       absEvents,
       prompts,
+      promptsCutAt,
       toolSequence: calls,
       turns,
       assistantMessages: turns.length,
@@ -777,11 +781,13 @@ function relativizeToolSequence(seq, startedAt) {
   }));
 }
 
-function relativizeTurns(turns, prompts, startedAt) {
+function relativizeTurns(turns, prompts, startedAt, promptsCutAt = null) {
   return turns.map((tu) => {
     const t = tu.tsMs && startedAt ? Math.max(0, tu.tsMs - startedAt) : 0;
     let promptIdx;
-    for (let i = prompts.length - 1; i >= 0; i--) {
+    // After the last prompt kept, a turn belongs to one that wasn't: to none, not to prompt #100.
+    const cut = promptsCutAt !== null && (tu.tsMs ?? 0) >= promptsCutAt;
+    for (let i = cut ? -1 : prompts.length - 1; i >= 0; i--) {
       const pt = prompts[i].tsMs ?? 0;
       if (pt <= (tu.tsMs ?? 0)) { promptIdx = i; break; }
     }
@@ -828,18 +834,49 @@ export function claudePids(pids) {
   return found;
 }
 
+const TITLE_TAIL_BYTES = 64 * 1024;
+
+/**
+ * A transcript's latest title, without reading it whole. Claude Code appends the title again as the
+ * session goes on (and `/rename` a new one), so the end of the file has the latest; a title set
+ * once, early in a long file, is in its first lines.
+ */
 async function readCustomTitleFast(path) {
-  // Scan first ~20 lines for a custom-title entry (cheap — don't load whole file).
-  if (!existsSync(path)) return null;
-  let i = 0;
-  for await (const line of jsonlLines(path)) {
-    i++;
-    if (i > 50) break;
-    if (!line.trim()) continue;
+  const titleOf = (line) => {
+    if (!line.includes("custom-title")) return null;
     try {
       const j = JSON.parse(line);
-      if (j.type === "custom-title" && typeof j.customTitle === "string") return j.customTitle;
-    } catch { /* skip */ }
+      return j?.type === "custom-title" && typeof j.customTitle === "string" ? j.customTitle : null;
+    } catch {
+      return null; // the cut first line of the tail, or a line being written
+    }
+  };
+  try {
+    const fh = await open(path, "r");
+    let tail;
+    let size;
+    try {
+      ({ size } = await fh.stat());
+      const n = Math.min(size, TITLE_TAIL_BYTES);
+      const buf = Buffer.alloc(n);
+      await fh.read(buf, 0, n, size - n);
+      tail = buf.toString("utf8").split("\n");
+    } finally {
+      await fh.close();
+    }
+    for (let i = tail.length - 1; i >= 0; i--) {
+      const title = titleOf(tail[i]);
+      if (title) return title;
+    }
+    if (size <= TITLE_TAIL_BYTES) return null;
+    let i = 0;
+    for await (const line of jsonlLines(path)) {
+      if (++i > 50) break;
+      const title = titleOf(line);
+      if (title) return title;
+    }
+  } catch {
+    /* gone or unreadable: no title */
   }
   return null;
 }
@@ -1013,7 +1050,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
 
   const mainTurns = t?.turns ?? [];
   const allTurns = [...mainTurns, ...subs.flatMap((sub) => sub.turns)].sort((a, b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
-  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs);
+  const turns = relativizeTurns(allTurns, t?.prompts ?? [], startedAtMs, t?.promptsCutAt ?? null);
 
   const toolCounts = {};
   for (const src of [t, ...subs]) {

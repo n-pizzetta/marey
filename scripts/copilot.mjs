@@ -183,6 +183,8 @@ export async function parseCopilotEvents(path) {
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
+  // Prompts past the first 100 are not kept: their turns are attributed to none (`promptsCutAt`).
+  let promptsCutAt = null;
   const toolSequence = [];
   const turns = [];
   const resultById = new Map();
@@ -260,6 +262,7 @@ export async function parseCopilotEvents(path) {
       pendingIn = { bytes: pendingIn.bytes + text.length, preview: text.slice(0, 200) };
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
       if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+      else promptsCutAt ??= tsMs;
     } else if (type === "session.usage_record") {
       const u = d.usage ?? {};
       const cacheRead = u.cacheReadTokens ?? 0;
@@ -398,6 +401,7 @@ export async function parseCopilotEvents(path) {
     toolCounts,
     absEvents,
     prompts,
+    promptsCutAt,
     toolSequence,
     turns,
     assistantMessages: turns.filter((tu) => !tu.sidechain).length,
