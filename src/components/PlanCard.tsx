@@ -4,6 +4,7 @@ import { PROVIDER_LABELS } from "../utils/providers";
 import { limitColor } from "../utils/rateLimits";
 import { formatCost, formatTokens } from "../utils/format";
 import { formatCredits, formatLeft, formatResetAt, pctText } from "../utils/planFormat";
+import { forecastLevel } from "../utils/forecast";
 import "../plan.css";
 
 interface Props {
@@ -31,7 +32,8 @@ function sourceNote(usage: PlanUsage, now: number): string | null {
 
 /**
  * One provider's plan: each window's % used, split by running session (one slice each) and the
- * rest (ended sessions, other machines), a tick for the time elapsed, and when it resets.
+ * rest (ended sessions, other machines), a tick for the time elapsed, when it resets, and where
+ * it is heading if the pace holds.
  */
 export function PlanCard({ usage, colors, hovered, onHover, now, onSelectSession, onDetails }: Props) {
   const { provider, limits, windows, today } = usage;
@@ -92,7 +94,9 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
   const runningPts = running.reduce((n, s) => n + slice(s), 0);
   const rest = Math.max(0, (known ? used : w.shares.length ? 100 : 0) - runningPts);
   const color = known ? limitColor(used / 100) : "var(--c-text)";
-  const ahead = elapsed !== null && known && used / 100 - elapsed > 0.1;
+  const level = w.forecast ? forecastLevel(w.forecast, w, now) : "flat";
+  // The stretch of the bar the pace would still fill by the reset.
+  const ahead = w.forecast && level !== "flat" ? Math.min(100, w.forecast.atReset) - used : 0;
   // A slice only lights up in the card whose window the session used; elsewhere nothing dims.
   const pointed = running.find((s) => s.session.id === hovered) ?? null;
   const state = (id: string) => (pointed ? (id === pointed.session.id ? " on" : " off") : "");
@@ -145,6 +149,7 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
             }
           />
         )}
+        {ahead > 0 && <span className={`plan-bar-ahead${level === "hit" ? " hit" : ""}${pointed ? " off" : ""}`} style={{ width: `${ahead}%` }} aria-hidden="true" />}
         {elapsed !== null && <span className="plan-bar-pace" style={{ left: `${elapsed * 100}%` }} title={`${Math.round(elapsed * 100)}% of the ${w.label.toLowerCase()} elapsed`} />}
       </div>
       {pointed ? (
@@ -158,12 +163,35 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
           {known
             ? <>Running sessions: <b className="tabular">{pctText(runningPts)}</b> of the {pctText(w.usedPct!)}</>
             : <>Running sessions: <b className="tabular">{pctText(runningPts)}</b> of this window's use</>}
-          {ahead && <span className="plan-ahead"> · ahead of pace</span>}
         </div>
       )}
-      {running.length === 0 && ahead && <div className="plan-meter-note"><span className="plan-ahead">Ahead of pace</span></div>}
+      {w.forecast && level !== "flat" && (
+        <div className={`plan-meter-note plan-forecast ${level}`} title={forecastTitle(w)}>
+          {forecastText(w, level, now)}
+          {level === "hit" && w.driver && <> · <b>{nameOf(w.driver.session)}</b> is {pctText(w.driver.part * 100)} of it</>}
+        </div>
+      )}
     </div>
   );
+}
+
+/** "At the last hour's pace: limit at 16:40, 50m before the reset", or "≈ 78% at the reset". */
+function forecastText(w: PlanWindow, level: "hit" | "rise", now: number): string {
+  const f = w.forecast!;
+  const pace = f.basis === "recent" ? "At the last hour's pace" : `At this ${w.key === "month" ? "month" : "week"}'s pace`;
+  if (level === "hit") return `${pace}: limit ${dayOrTime(f.hitAt!, now)}, ${formatLeft(w.resetsAt! - f.hitAt!)} before the reset`;
+  return `${pace}: ≈ ${Math.min(100, Math.round(f.atReset))}% at the reset`;
+}
+
+/** "at 16:40" today, "on Sat 10:00" or "on 1 Nov" later. */
+const dayOrTime = (ts: number, now: number) => `${new Date(ts).toDateString() === new Date(now).toDateString() ? "at" : "on"} ${formatResetAt(ts, now)}`;
+
+function forecastTitle(w: PlanWindow): string {
+  const f = w.forecast!;
+  const rate = `${pctText(f.perHour >= 1 ? f.perHour : f.perHour * 24)} of the limit per ${f.perHour >= 1 ? "hour" : "day"}`;
+  return f.basis === "recent"
+    ? `A projection, not a prediction: ${rate}, the lower of the last 15 and the last 60 minutes' pace, held until the reset. Rough while the reset is hours away.`
+    : `A projection, not a prediction: ${rate}, this ${w.key === "month" ? "month" : "week"}'s average so far, held until the reset.`;
 }
 
 function resetText(w: PlanWindow, now: number): string {

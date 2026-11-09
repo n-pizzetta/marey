@@ -10,6 +10,7 @@ versioning follows [SemVer](https://semver.org/).
 
 - Prices for Claude Fable 5.2 and Mythos 5.2 ($8 / $40 per million tokens, cache reads $0.20) and for GPT-6.1 Sol and Terra. Fable 5.2 sessions were priced like Fable 5.1, 25% too high, and GPT-6.1 ones like GPT-5.4. The bare `fable` and `mythos` aliases now mean 5.2.
 - Fast mode is priced: a Claude Code turn made in fast mode counts at twice its model's rates, as the API bills it, and shows as its own model (`Opus 5.5 (fast)`) in the model mix. It was priced at the standard rate, half its API value.
+- Now: each plan bar says where it is heading. For the 5h window, from the last hour's pace: `limit at 16:40, 50m before the reset`, naming the running session behind most of it when several run, or `≈ 78% at the reset`. For the week and the month, from their pace so far. The hatched stretch of the bar is what the pace would still fill. It replaces "ahead of pace" on the cards. A projection, not a prediction: checked on 37 recorded 5h windows, it lands within about 5 points with under 2 hours left, and is rough beyond.
 
 ### Fixed
 

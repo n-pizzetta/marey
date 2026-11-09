@@ -90,9 +90,22 @@
   pointer-events: auto;
 }
 
+/* where the pace leads by the reset: a hatched stretch after the fill, amber when it reaches the limit first */
+.plan-bar-ahead {
+  display: block;
+  height: 100%;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0 3px, transparent 3px 7px);
+  transition: width var(--t-slow), opacity var(--t-fast);
+}
+.plan-bar-ahead.hit { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c-amber) 70%, transparent) 0 3px, transparent 3px 7px); }
+.plan-bar-ahead.off { opacity: 0.4; }
+.plan-bar > .plan-bar-ahead:last-of-type { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+
 .plan-meter-note { font-size: var(--fs-md); color: var(--c-text-dim); }
 .plan-meter-note b { font-weight: 600; color: var(--c-text-soft); }
-.plan-ahead { color: var(--c-amber); }
+.plan-forecast { margin-top: -4px; }
+.plan-forecast.hit { color: var(--c-amber); }
+.plan-forecast.hit b { color: inherit; }
 
 .plan-hint { margin: -6px 0 0; font-size: var(--fs-md); color: var(--c-text-dim); line-height: 1.5; }
 .plan-hint code { font-family: var(--f-mono); color: var(--c-text-soft); }
