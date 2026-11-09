@@ -30,7 +30,7 @@ import {
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
 import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
 import { freshest } from "./provider-limits.mjs";
-import { baseModel, costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides, withSpeed } from "./models.mjs";
+import { baseModel, contextWindowOf, costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides, withSpeed } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
@@ -1423,7 +1423,8 @@ export async function readLiveContext(now = Date.now()) {
  * Claude Code transcripts don't say how large the context window is (opus-5.5 can run at 1M
  * without a `[1m]` suffix), so a session that peaked under 200k was read against 200k. The status
  * line snapshots do say (`context.size`): a session takes its own, else the latest one of its
- * model, and its quality score is re-scored against it. Without either, the inference stays.
+ * model, else the window in its model's row (`contextWindowOf`: the models that only run at 1M),
+ * and its quality score is re-scored against it. Without any, the inference stays.
  */
 async function applyContextWindows(sessions) {
   const byId = new Map();
@@ -1438,9 +1439,10 @@ async function applyContextWindows(sessions) {
   }
   for (const s of sessions) {
     if (s.agent !== "claude" || s.contextWindow) continue;
-    const window = byId.get(s.id) ?? byModel.get(baseModel(s.model));
-    // A peak past the window would prove the snapshot wrong for this session (another setting then).
-    if (!window || s.quality?.peak > window) continue;
+    // A peak past a window proves it wrong for this session (another setting then).
+    const fits = (w) => (w && !(s.quality?.peak > w) ? w : null);
+    const window = fits(byId.get(s.id) ?? byModel.get(baseModel(s.model))) ?? fits(contextWindowOf(s.model));
+    if (!window) continue;
     s.contextWindow = window;
     s.quality = withWindow(s.quality, window);
   }

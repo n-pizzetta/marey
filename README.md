@@ -234,11 +234,11 @@ A model missing from the table still gets a readable name and is priced like the
 
 ```json
 {
-  "claude-opus-6": { "label": "Opus 6", "in": 6, "out": 30, "cacheRead": 0.6 }
+  "claude-opus-6": { "label": "Opus 6", "in": 6, "out": 30, "cacheRead": 0.6, "window": 1000000 }
 }
 ```
 
-Cache writes are derived from `in` (1.25x for the 5-minute TTL, 2x for 1 hour). Entries override built-in rows with the same id.
+Cache writes are derived from `in` (1.25x for the 5-minute TTL, 2x for 1 hour). `label` and `window` are optional: `window` is the model's context window in tokens, for the context score of sessions that never showed it in the status line. Entries override built-in rows with the same id.
 
 ---
 

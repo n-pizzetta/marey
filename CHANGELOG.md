@@ -11,6 +11,10 @@ versioning follows [SemVer](https://semver.org/).
 - Prices for Claude Fable 5.2 and Mythos 5.2 ($8 / $40 per million tokens, cache reads $0.20) and for GPT-6.1 Sol and Terra. Fable 5.2 sessions were priced like Fable 5.1, 25% too high, and GPT-6.1 ones like GPT-5.4. The bare `fable` and `mythos` aliases now mean 5.2.
 - Fast mode is priced: a Claude Code turn made in fast mode counts at twice its model's rates, as the API bills it, and shows as its own model (`Opus 5.5 (fast)`) in the model mix. It was priced at the standard rate, half its API value.
 
+### Fixed
+
+- Sessions on Fable, Mythos, Opus 5 and 5.5 or Sonnet 5.5 that stayed under 200k tokens were read against a 200k context window unless the status line had reported its size, so their context fill, context score and the Timeline's window line were up to five times too pessimistic. These models only run at 1M in Claude Code: the window now comes from the model's row when no status line snapshot says otherwise. `models.json` takes an optional `window` for a model the table doesn't have yet.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

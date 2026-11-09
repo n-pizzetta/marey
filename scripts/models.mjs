@@ -10,25 +10,33 @@
  * writes) is over `over` tokens at that tier instead (Haiku 5.5). A request
  * made in fast mode costs twice every rate of its model (`withSpeed`).
  *
+ * `window` is the context window of a model that runs at that size in Claude
+ * Code whatever its id says (`contextWindowOf`): Fable, Mythos, Opus 5.x and
+ * Sonnet 5.5, whose transcripts hold prompts well past 200k with no `[1m]` in
+ * the id. Rows without it (Sonnet 5 and Haiku 5.5 included, not seen past
+ * 200k yet) leave the window to be inferred.
+ *
  * When Anthropic or OpenAI ships a model: add a row here. Unknown ids still get a
  * readable name (see normalizeModel) and the latest price of their family.
  */
+const M = 1_000_000;
+
 export const MODELS = {
-  "fable-5.2":  { label: "Fable 5.2",  in: 8,  out: 40, cacheRead: 0.2 },
-  "fable-5.1":  { label: "Fable 5.1",  in: 10, out: 50, cacheRead: 0.25 },
-  "fable-5":    { label: "Fable 5",    in: 10, out: 50, cacheRead: 1 },
-  "mythos-5.2": { label: "Mythos 5.2", in: 8,  out: 40, cacheRead: 0.2 },
-  "mythos-5.1": { label: "Mythos 5.1", in: 10, out: 50, cacheRead: 0.25 },
-  "mythos-5":   { label: "Mythos 5",   in: 10, out: 50, cacheRead: 1 },
-  "opus-5.5":   { label: "Opus 5.5",   in: 4,  out: 20, cacheRead: 0.2 },
-  "opus-5":     { label: "Opus 5",     in: 5,  out: 25, cacheRead: 0.5 },
+  "fable-5.2":  { label: "Fable 5.2",  in: 8,  out: 40, cacheRead: 0.2, window: M },
+  "fable-5.1":  { label: "Fable 5.1",  in: 10, out: 50, cacheRead: 0.25, window: M },
+  "fable-5":    { label: "Fable 5",    in: 10, out: 50, cacheRead: 1, window: M },
+  "mythos-5.2": { label: "Mythos 5.2", in: 8,  out: 40, cacheRead: 0.2, window: M },
+  "mythos-5.1": { label: "Mythos 5.1", in: 10, out: 50, cacheRead: 0.25, window: M },
+  "mythos-5":   { label: "Mythos 5",   in: 10, out: 50, cacheRead: 1, window: M },
+  "opus-5.5":   { label: "Opus 5.5",   in: 4,  out: 20, cacheRead: 0.2, window: M },
+  "opus-5":     { label: "Opus 5",     in: 5,  out: 25, cacheRead: 0.5, window: M },
   "opus-4.8":   { label: "Opus 4.8",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.7":   { label: "Opus 4.7",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.6":   { label: "Opus 4.6",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.5":   { label: "Opus 4.5",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.1":   { label: "Opus 4.1",   in: 15, out: 75, cacheRead: 1.5 },
   "opus-4":     { label: "Opus 4",     in: 15, out: 75, cacheRead: 1.5 },
-  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.1 },
+  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.1, window: M },
   "sonnet-5":   { label: "Sonnet 5",   in: 2,  out: 10, cacheRead: 0.2 },
   "sonnet-4.6": { label: "Sonnet 4.6", in: 3,  out: 15, cacheRead: 0.3 },
   "sonnet-4.5": { label: "Sonnet 4.5", in: 3,  out: 15, cacheRead: 0.3 },
@@ -89,8 +97,9 @@ export function normalizeModel(id) {
 /**
  * Replace user overrides (from ~/.claude/marey/models.json) on top of the
  * built-in table. Keys may be raw ids (`claude-opus-6`) or normalized
- * (`opus-6`); rows need numeric `in`, `out`, `cacheRead` ($/MTok) and an
- * optional `label`. Invalid rows are skipped. Returns the accepted rows.
+ * (`opus-6`); rows need numeric `in`, `out`, `cacheRead` ($/MTok) and take an
+ * optional `label` and `window` (context window in tokens). Invalid rows are
+ * skipped. Returns the accepted rows.
  */
 export function setModelOverrides(overrides) {
   for (const k of Object.keys(MODELS)) delete MODELS[k];
@@ -102,7 +111,8 @@ export function setModelOverrides(overrides) {
     const valid = v && [v.in, v.out, v.cacheRead].every((n) => typeof n === "number" && n >= 0);
     if (!id || key.startsWith("$") || !valid) continue;
     const label = typeof v.label === "string" && v.label ? v.label : modelLabel(id);
-    MODELS[id] = accepted[id] = { label, in: v.in, out: v.out, cacheRead: v.cacheRead };
+    const window = Number.isFinite(v.window) && v.window > 0 ? { window: v.window } : {};
+    MODELS[id] = accepted[id] = { label, in: v.in, out: v.out, cacheRead: v.cacheRead, ...window };
   }
   return accepted;
 }
@@ -129,6 +139,16 @@ export function baseModel(model) {
 /** False when the model has no row and its cost is an estimate (family fallback). */
 export function isKnownModel(model) {
   return !!model && Object.hasOwn(MODELS, baseModel(model));
+}
+
+/**
+ * The context window Claude Code gives a model, when its row says: the transcript doesn't, and a
+ * session that stayed under 200k looks the same at either size. An override that only changes
+ * prices keeps the built-in window. Null when unknown.
+ */
+export function contextWindowOf(model) {
+  const base = baseModel(model);
+  return MODELS[base]?.window ?? BUILTIN[base]?.window ?? null;
 }
 
 /** What a request's prompt counts for a `longPrompt` tier: its input, cache reads and cache writes. */
