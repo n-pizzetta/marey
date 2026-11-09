@@ -16,6 +16,23 @@ test("older ids normalize to their own row, not the default model", () => {
   assert.equal(priceFor("sonnet-3.7").in, priceFor("sonnet-5.5").in);
 });
 
+test("Fable 5.2 and Mythos 5.2 have their own rows, and the bare aliases point at them", () => {
+  assert.equal(normalizeModel("claude-fable-5-2"), "fable-5.2");
+  assert.equal(normalizeModel("fable"), "fable-5.2");
+  assert.equal(normalizeModel("mythos[1m]"), "mythos-5.2");
+  assert.equal(isKnownModel("fable-5.2"), true);
+  // Cheaper than 5.1: priced like it, a 5.2 session read 25% too high.
+  assert.deepEqual(priceFor("fable-5.2"), { in: 8, out: 40, cacheRead: 0.2, cacheWrite: 10, cacheWrite1h: 16 });
+  assert.deepEqual(priceFor("mythos-5.2"), priceFor("fable-5.2"));
+  assert.equal(priceFor("fable-5.1").in, 10);
+});
+
+test("GPT-6.1 has its own rows instead of the GPT fallback", () => {
+  assert.equal(normalizeModel("gpt-6.1-sol"), "gpt-6.1-sol");
+  assert.deepEqual(priceFor("gpt-6.1-sol"), { in: 2, out: 10, cacheRead: 0.1, cacheWrite: 2.5, cacheWrite1h: 4 });
+  assert.deepEqual(priceFor("gpt-6.1-terra"), { in: 1, out: 5, cacheRead: 0.05, cacheWrite: 1.25, cacheWrite1h: 2 });
+});
+
 test("Haiku 5.5 has its own row, and the bare alias points at it", () => {
   assert.equal(normalizeModel("claude-haiku-5-5"), "haiku-5.5");
   assert.equal(normalizeModel("haiku"), "haiku-5.5");

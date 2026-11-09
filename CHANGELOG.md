@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Prices for Claude Fable 5.2 and Mythos 5.2 ($8 / $40 per million tokens, cache reads $0.20) and for GPT-6.1 Sol and Terra. Fable 5.2 sessions were priced like Fable 5.1, 25% too high, and GPT-6.1 ones like GPT-5.4. The bare `fable` and `mythos` aliases now mean 5.2.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

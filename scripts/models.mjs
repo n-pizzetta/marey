@@ -13,8 +13,10 @@
  * readable name (see normalizeModel) and the latest price of their family.
  */
 export const MODELS = {
+  "fable-5.2":  { label: "Fable 5.2",  in: 8,  out: 40, cacheRead: 0.2 },
   "fable-5.1":  { label: "Fable 5.1",  in: 10, out: 50, cacheRead: 0.25 },
   "fable-5":    { label: "Fable 5",    in: 10, out: 50, cacheRead: 1 },
+  "mythos-5.2": { label: "Mythos 5.2", in: 8,  out: 40, cacheRead: 0.2 },
   "mythos-5.1": { label: "Mythos 5.1", in: 10, out: 50, cacheRead: 0.25 },
   "mythos-5":   { label: "Mythos 5",   in: 10, out: 50, cacheRead: 1 },
   "opus-5.5":   { label: "Opus 5.5",   in: 4,  out: 20, cacheRead: 0.2 },
@@ -36,11 +38,13 @@ export const MODELS = {
   // Retired 3.x models (Sonnet 3.7 / 3.5, Opus 3, Haiku 3) have no published price any more:
   // they fall back to their family's latest, marked as an estimate.
   // OpenAI rows: developers.openai.com/api/docs/models/<id>. Prompts over 272k
-  // input tokens and fast mode cost more; not modelled (no tier in rollouts).
+  // input tokens and OpenAI's fast mode cost more; not modelled (no tier in rollouts).
+  "gpt-6.1-sol":   { label: "GPT-6.1 Sol",   in: 2,   out: 10,  cacheRead: 0.1 },
+  "gpt-6.1-terra": { label: "GPT-6.1 Terra", in: 1,   out: 5,   cacheRead: 0.05 },
   "gpt-6-astra":   { label: "GPT-6 Astra",   in: 10,  out: 50,  cacheRead: 1 },
   "gpt-6-sol":     { label: "GPT-6 Sol",     in: 2,   out: 10,  cacheRead: 0.2 },
   "gpt-6-luna":    { label: "GPT-6 Luna",    in: 0.1, out: 0.5, cacheRead: 0.01 },
-  // Promotional price "at least through November 21, 2026"; list price is $5 / $30.
+  // Promotional price "until November 30, 2026"; list price is $5 / $30.
   "gpt-5.6-sol":   { label: "GPT-5.6 Sol",   in: 4,   out: 20,  cacheRead: 0.4 },
   "gpt-5.6-terra": { label: "GPT-5.6 Terra", in: 2,   out: 12,  cacheRead: 0.2 },
   "gpt-5.6-luna":  { label: "GPT-5.6 Luna",  in: 0.2, out: 1.2, cacheRead: 0.02 },
@@ -54,8 +58,8 @@ export const DEFAULT_MODEL = "opus-5.5";
 
 /** What Claude Code's bare aliases (`opus`, `sonnet[1m]`, …) resolve to today. */
 const FAMILY_LATEST = {
-  fable: "fable-5.1",
-  mythos: "mythos-5.1",
+  fable: "fable-5.2",
+  mythos: "mythos-5.2",
   opus: "opus-5.5",
   sonnet: "sonnet-5.5",
   haiku: "haiku-5.5",
