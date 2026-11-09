@@ -7,7 +7,8 @@
  * rates). Cache writes are derived from the input rate: 1.25x (5-minute TTL),
  * 2x (1-hour TTL). Cache reads vary by model, so they are listed. A row with
  * `longPrompt` bills a request whose prompt (input + cache reads + cache
- * writes) is over `over` tokens at that tier instead (Haiku 5.5).
+ * writes) is over `over` tokens at that tier instead (Haiku 5.5). A request
+ * made in fast mode costs twice every rate of its model (`withSpeed`).
  *
  * When Anthropic or OpenAI ships a model: add a row here. Unknown ids still get a
  * readable name (see normalizeModel) and the latest price of their family.
@@ -106,9 +107,28 @@ export function setModelOverrides(overrides) {
   return accepted;
 }
 
+const FAST = "-fast";
+/** Fast mode bills the same model at twice every rate, cache reads and writes included. */
+const FAST_RATE = 2;
+
+/**
+ * A request's model with the speed it ran at (`usage.speed`): fast mode has its own price list, so
+ * it gets an id of its own, `opus-5.5-fast`, and everything that prices or names a turn by its
+ * model follows. Any other speed leaves the model as it is.
+ */
+export function withSpeed(model, speed) {
+  return model && speed === "fast" ? `${model}${FAST}` : model;
+}
+
+/** `opus-5.5-fast` → `opus-5.5`: the model itself, whatever speed it ran at. */
+export function baseModel(model) {
+  const m = String(model ?? "");
+  return m.endsWith(FAST) ? m.slice(0, -FAST.length) : m;
+}
+
 /** False when the model has no row and its cost is an estimate (family fallback). */
 export function isKnownModel(model) {
-  return !!model && Object.hasOwn(MODELS, model);
+  return !!model && Object.hasOwn(MODELS, baseModel(model));
 }
 
 /** What a request's prompt counts for a `longPrompt` tier: its input, cache reads and cache writes. */
@@ -121,13 +141,17 @@ export function promptTokens(t) {
  * size (`promptTokens`): past a model's `longPrompt.over`, that tier applies.
  */
 export function priceFor(model, prompt = 0) {
-  const row = MODELS[model] ?? MODELS[FAMILY_LATEST[String(model).split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
+  const base = baseModel(model);
+  const row = MODELS[base] ?? MODELS[FAMILY_LATEST[base.split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
   const p = row.longPrompt && prompt > row.longPrompt.over ? row.longPrompt : row;
-  return { in: p.in, out: p.out, cacheRead: p.cacheRead, cacheWrite: p.in * 1.25, cacheWrite1h: p.in * 2 };
+  const x = base === String(model ?? "") ? 1 : FAST_RATE;
+  return { in: p.in * x, out: p.out * x, cacheRead: p.cacheRead * x, cacheWrite: p.in * 1.25 * x, cacheWrite1h: p.in * 2 * x };
 }
 
 export function modelLabel(model) {
   if (!model) return "unknown";
+  const base = baseModel(model);
+  if (base !== model) return `${modelLabel(base)} (fast)`;
   if (MODELS[model]) return MODELS[model].label;
   if (model.startsWith("gpt-")) return `GPT-${model.slice(4)}`;
   if (model.startsWith("codex-")) return `Codex ${model.slice(6).replace(/-/g, " ")}`;

@@ -228,7 +228,7 @@ The server only listens on `127.0.0.1` and refuses state-changing requests from 
 
 ## Pricing
 
-Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). Copilot CLI sessions are priced the same way, plus the AI credits Copilot CLI logged for each request, which is what its monthly quota counts. The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model.
+Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). Copilot CLI sessions are priced the same way, plus the AI credits Copilot CLI logged for each request, which is what its monthly quota counts. The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model; a Claude Code turn made in fast mode counts at twice its model's rates and shows as its own line (`Opus 5.5 (fast)`).
 
 A model missing from the table still gets a readable name and is priced like the latest model of its family. Costs that include it are marked `~` in the dashboard. To fix one without waiting for a release, add it to `~/.claude/marey/models.json` (prices in USD per million tokens; picked up on the next refresh):
 

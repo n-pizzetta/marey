@@ -30,7 +30,7 @@ import {
 import { CODEX, codexRootOf, indexCodexRollouts, isCodexLive, isCodexRunning, parseCodexRollout } from "./codex.mjs";
 import { copilotLiveState, copilotPids, indexCopilotSessions, parseCopilotEvents, readOpenSessions } from "./copilot.mjs";
 import { freshest } from "./provider-limits.mjs";
-import { costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides } from "./models.mjs";
+import { baseModel, costOf, DEFAULT_MODEL, isKnownModel, normalizeModel, priceFor, promptTokens, setModelOverrides, withSpeed } from "./models.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { nestSubagentCalls } from "./subagent-calls.mjs";
 import { stripNoise } from "./known-frictions.mjs";
@@ -549,7 +549,8 @@ function createTranscriptParser(path, sidechain) {
       const key = msgId ?? `line-${turns.length}-${tsMs}`;
       let turn = turnById.get(key);
       if (!turn) {
-        const turnModel = normalizeModel(msg.model) ?? model;
+        // Every line of a message repeats its usage, so the first one already says the speed.
+        const turnModel = withSpeed(normalizeModel(msg.model), msg.usage?.speed) ?? model;
         if (!model) model = turnModel;
         turn = {
           tsMs,
@@ -1437,7 +1438,7 @@ async function applyContextWindows(sessions) {
   }
   for (const s of sessions) {
     if (s.agent !== "claude" || s.contextWindow) continue;
-    const window = byId.get(s.id) ?? byModel.get(s.model);
+    const window = byId.get(s.id) ?? byModel.get(baseModel(s.model));
     // A peak past the window would prove the snapshot wrong for this session (another setting then).
     if (!window || s.quality?.peak > window) continue;
     s.contextWindow = window;
