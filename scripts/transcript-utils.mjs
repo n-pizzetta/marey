@@ -45,6 +45,74 @@ export function countShellKinds(command, into) {
   for (const kind of hit) into[kind] += 1;
 }
 
+/**
+ * The start of a command inside a shell line: its first words after `&&`, `||`, `;` or a newline,
+ * past env assignments and wrappers. Not after a single `|`: nothing is piped into a commit, and a
+ * search for `a|git commit` is not one.
+ */
+const HEAD = String.raw`(?:^|\n|&&|\|\||;)\s*(?:\(+\s*)?(?:\w+=\S*\s+)*(?:(?:rtk(?:\s+proxy)?|time|sudo|command|exec)\s+)*`;
+const COMMIT_RE = new RegExp(HEAD + String.raw`(?:\S*\/)?git\s+(?:-[cC]\s+\S+\s+)*commit\b`);
+const PR_CREATE_RE = new RegExp(HEAD + String.raw`gh\s+pr\s+create\b`);
+const QUOTED = String.raw`(["'])((?:\\.|(?!\1)[^\\])*)`;
+const MESSAGE_RE = new RegExp(String.raw`\s(?:-[a-zA-Z]*m|--message)[\s=]*` + QUOTED);
+const TITLE_RE = new RegExp(String.raw`\s(?:-t|--title)[\s=]*` + QUOTED);
+const HEREDOC_RE = /<<-?\s*(['"]?)(\w+)\1[^\n]*\n\s*([^\n]+)/;
+const PR_URL_RE = /https:\/\/[\w.-]+\/[\w.-]+\/[\w.-]+\/pull\/\d+/;
+
+const firstLine = (s) => s.split("\n").find((l) => l.trim())?.trim() ?? "";
+/** A message the shell still has to expand (`$T`, `$(head -1 notes.md)`) is not what was written. */
+const literal = (s) => (/\$[\w({]/.test(s) ? "" : s);
+
+/**
+ * The commit a shell command makes: `undefined` when it makes none (`echo "git commit"`, a grep
+ * for it), else its subject, the first line of the message (`-m "…"`, or a heredoc given to
+ * `-F -` or to `-m "$(cat <<'EOF' …)"`), or null when the command writes none (`--amend
+ * --no-edit`, an editor) or leaves it to the shell (`-m "$MSG"`).
+ */
+export function commitOf(command) {
+  const m = COMMIT_RE.exec(command);
+  if (!m) return undefined;
+  const rest = command.slice(m.index + m[0].length);
+  const message = MESSAGE_RE.exec(rest)?.[2];
+  const subject = literal(message !== undefined && !message.startsWith("$(") ? firstLine(message) : (HEREDOC_RE.exec(rest)?.[3] ?? "").trim());
+  return subject ? clip(subject, 140) : null;
+}
+
+/**
+ * What a session shipped, read from its shell commands: its commits (subject and time) and the
+ * pull requests it opened (the URL `gh pr create` printed, and its `--title`). `command` returns
+ * what to keep with the call, for `result` to drop a commit that failed and to read the PR's URL.
+ */
+export function createShipLog() {
+  const commits = [];
+  const prs = [];
+  return {
+    command(command, tsMs, msgId = null) {
+      const subject = commitOf(command);
+      const commit = subject === undefined ? null : { tsMs, subject, msgId, failed: false };
+      if (commit) commits.push(commit);
+      const pr = PR_CREATE_RE.test(command) ? { tsMs, msgId, title: clip(literal(firstLine(TITLE_RE.exec(command)?.[2] ?? "")), 140) || null } : null;
+      return commit || pr ? { commit, pr } : null;
+    },
+    result(mark, body, isError) {
+      if (!mark) return;
+      if (isError && mark.commit) mark.commit.failed = true;
+      const url = mark.pr && !isError ? PR_URL_RE.exec(body ?? "")?.[0] : null;
+      if (url && !prs.some((p) => p.url === url)) prs.push({ tsMs: mark.pr.tsMs, msgId: mark.pr.msgId, title: mark.pr.title, url: own(url) });
+    },
+    failed(mark) {
+      if (mark?.commit) mark.commit.failed = true;
+    },
+    /** Copies, so lines read later change nothing already handed out. Commits with a subject that did not fail. */
+    snapshot() {
+      return {
+        commitLog: commits.filter((c) => !c.failed && c.subject).map(({ tsMs, subject, msgId }) => ({ tsMs, subject, msgId })),
+        prLog: prs.map((p) => ({ ...p })),
+      };
+    },
+  };
+}
+
 /** `s` as a string of its own: a slice of a string keeps the whole string in memory. */
 export const own = (s) => (typeof s === "string" ? structuredClone(s) : s);
 

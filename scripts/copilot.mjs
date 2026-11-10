@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { normalizeModel } from "./models.mjs";
-import { addTokens, countShellKinds, emptyTokens, firstLineSummary, IDLE_CAP_MS, jsonlLines, longestRun } from "./transcript-utils.mjs";
+import { addTokens, countShellKinds, createShipLog, emptyTokens, firstLineSummary, IDLE_CAP_MS, jsonlLines, longestRun } from "./transcript-utils.mjs";
 import { briefOf, createContextCollector, instructionBlocksOf } from "./agent-context.mjs";
 
 // Copilot CLI moves ~/.copilot when COPILOT_HOME is set; so do we.
@@ -195,6 +195,7 @@ export async function parseCopilotEvents(path) {
   const openPermissions = new Map();
   let userMessages = 0;
   let commits = 0;
+  const ship = createShipLog();
   let subAgents = 0;
   let model = null;
   let firstTs = null;
@@ -306,9 +307,10 @@ export async function parseCopilotEvents(path) {
       toolCounts[name] = (toolCounts[name] ?? 0) + 1;
       turns.at(-1)?.tools.push(name);
       absEvents.push({ tsMs, kind: SUBAGENT_TOOLS.has(name) ? "agent" : "tool", tool: name, label: name });
+      const shipped = SHELL_TOOLS.has(name) && typeof args.command === "string" ? ship.command(args.command, tsMs) : null;
       if (SHELL_TOOLS.has(name) && typeof args.command === "string") {
         countShellKinds(args.command, shell);
-        if (/\bgit\s+commit\b/.test(args.command)) {
+        if (shipped?.commit) {
           commits++;
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
@@ -321,7 +323,7 @@ export async function parseCopilotEvents(path) {
       if (SUBAGENT_TOOLS.has(name) && d.toolCallId && typeof args.prompt === "string") taskBriefs.set(d.toolCallId, args.prompt);
       if (sub) subCalls.set(j.agentId, (subCalls.get(j.agentId) ?? 0) + 1);
       const { preview, full } = previewOf(name, args);
-      const call = { tool: name, tsMs, ask: name === "ask_user" ? preview : null, preview: preview.slice(0, 160) };
+      const call = { tool: name, tsMs, ask: name === "ask_user" ? preview : null, preview: preview.slice(0, 160), shipped };
       if (d.toolCallId) {
         callById.set(d.toolCallId, call);
         if (!sub) lastCallId = d.toolCallId;
@@ -334,6 +336,7 @@ export async function parseCopilotEvents(path) {
     } else if (type === "tool.execution_complete") {
       if (!d.toolCallId) continue;
       const body = resultText(d);
+      ship.result(callById.get(d.toolCallId)?.shipped, body, d.success === false);
       resultById.set(d.toolCallId, { text: body.slice(0, 240), truncated: body.length > 240, isError: d.success === false, bytes: body.length });
       pendingIn.bytes += body.length;
       if (!pendingIn.preview) pendingIn.preview = `[tool_result] ${body.slice(0, 200)}`;
@@ -407,6 +410,7 @@ export async function parseCopilotEvents(path) {
     assistantMessages: turns.filter((tu) => !tu.sidechain).length,
     userMessages,
     commits,
+    ...ship.snapshot(),
     shell,
     model,
     firstTs,

@@ -19,6 +19,7 @@ import {
   addTokens,
   clip,
   countShellKinds,
+  createShipLog,
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
@@ -61,6 +62,8 @@ const WAIT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 const MAX_INCIDENTS = 500;
 /** Calls kept per transcript, with their input and result, for the session view. */
 const MAX_CALLS = 300;
+/** Commits and pull requests kept per session (the journal lists them). */
+const MAX_SHIPPED = 100;
 
 /** The question asked, or the plan's title. */
 function askText(tool, input) {
@@ -501,6 +504,9 @@ function createTranscriptParser(path, sidechain) {
   const context = createContextCollector();
   let userMessages = 0;
   let commits = 0;
+  // Commits and pull requests, with what each call shipped until its result says whether it went through.
+  const ship = createShipLog();
+  const shippedByCall = new Map();
   const shell = { prs: 0, tests: 0, lints: 0, infra: 0 };
   let model = null;
   let firstTs = null;
@@ -509,6 +515,7 @@ function createTranscriptParser(path, sidechain) {
   let cwd = null;
   let firstUserText = null;
   let customTitle = null;
+  let aiTitle = null;
   let pendingInBytes = 0;
   let pendingInPreview = "";
   let version = null;
@@ -530,6 +537,8 @@ function createTranscriptParser(path, sidechain) {
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
     // The latest title wins: `/rename` appends a new one.
     if (j.type === "custom-title" && typeof j.customTitle === "string") customTitle = j.customTitle;
+    // The title Claude Code gives a session by itself (shown in the terminal's title), rewritten as it goes.
+    if (j.type === "ai-title" && typeof j.aiTitle === "string" && j.aiTitle.trim()) aiTitle = clip(j.aiTitle.trim(), 140);
     if (j.type === "attachment") {
       if (j.attachment?.type === "instructions") context.instructions(j.timestamp ? new Date(j.timestamp).getTime() : null, j.attachment.files);
       else if (j.attachment?.type === "prompt_snapshot") context.snapshot();
@@ -603,7 +612,9 @@ function createTranscriptParser(path, sidechain) {
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
         turn.tools.push(name);
         absEvents.push({ tsMs, kind: SUBAGENT_TOOLS.has(c.name) ? "agent" : "tool", tool: name, label: name });
-        if (c.name === "Bash" && typeof input.command === "string" && /\bgit\s+commit\b/.test(input.command)) {
+        const shipped = c.name === "Bash" && typeof input.command === "string" ? ship.command(input.command, tsMs, msgId) : null;
+        if (shipped && c.id) shippedByCall.set(c.id, shipped);
+        if (shipped?.commit) {
           commits++;
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
@@ -657,6 +668,7 @@ function createTranscriptParser(path, sidechain) {
             }
             resultCount++;
             answered.add(tr.tool_use_id);
+            ship.result(shippedByCall.get(tr.tool_use_id), body, !!tr.is_error);
             const incident = incidentOf(j, tr, body, callById.get(tr.tool_use_id), tsMs);
             if (incident && incidents.length < MAX_INCIDENTS) {
               incidents.push(incident);
@@ -733,6 +745,7 @@ function createTranscriptParser(path, sidechain) {
       assistantMessages: turns.length,
       userMessages,
       commits,
+      ...ship.snapshot(),
       shell,
       model,
       firstTs,
@@ -743,6 +756,7 @@ function createTranscriptParser(path, sidechain) {
       pathByHash,
       runningTool,
       customTitle,
+      aiTitle,
       version,
       incidents,
       incidentMsgIds,
@@ -1132,6 +1146,14 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
   const firstOwnTurn = copiedUntil ? mainTurns.find(pastCopy) : null;
   const ownSince = copiedUntil ? prompts[0] ?? firstOwnTurn : null;
 
+  /** The session's own commits or pull requests (`key`), its sub-agents' included, oldest first. */
+  const shipLog = (key) =>
+    [t, ...subs]
+      .flatMap((src, i) => ownOf(i, src?.[key]))
+      .filter(pastCopy)
+      .sort((a, b) => a.tsMs - b.tsMs)
+      .slice(0, MAX_SHIPPED);
+
   const metaStart = meta?.start_time ? new Date(meta.start_time).getTime() : null;
   const startedAtMs = ownSince?.tsMs ?? t?.firstTs ?? metaStart ?? live?.startedAt ?? now;
   const isLive = !!live?.isLive;
@@ -1181,7 +1203,7 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     model,
     outcome,
     satisfaction: satisfactionOf(facet),
-    goal: (facet?.underlying_goal || customTitle || entry?.title || t?.title || live?.name || firstPrompt.slice(0, 140) || "Session"),
+    goal: (facet?.underlying_goal || customTitle || t?.aiTitle || entry?.title || t?.title || live?.name || firstPrompt.slice(0, 140) || "Session"),
     summary: facet?.brief_summary || (firstPrompt ? firstPrompt.slice(0, 220) : "No prompt captured."),
     customTitle,
     messages: t ? t.assistantMessages + t.userMessages : (meta?.user_message_count ?? 0) + (meta?.assistant_message_count ?? 0),
@@ -1197,6 +1219,9 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     subAgents: subs.length || t?.subAgents || (toolCounts.Agent ?? 0) + (toolCounts.Task ?? 0) + (toolCounts.spawn_agent ?? 0),
     filesChanged: fileHistory.length || t?.filesChanged || meta?.files_modified || 0,
     commits: t ? t.commits : meta?.git_commits ?? 0,
+    // What the session shipped, sub-agents included, for the journal: commit subjects and opened pull requests.
+    commitLog: shipLog("commitLog").map(({ tsMs, subject }) => ({ at: tsMs, subject })),
+    prLog: shipLog("prLog").map(({ tsMs, url, title }) => ({ at: tsMs, url, title })),
     ...(t ? { shell: t.shell } : {}),
     live: isLive,
     ...(live?.pid ? { pid: live.pid, processStartedAt: new Date(live.startedAt).toISOString() } : {}),
@@ -1661,6 +1686,8 @@ export function summarizeSession(s) {
     subAgents: s.subAgents,
     filesChanged: s.filesChanged,
     commits: s.commits,
+    ...(s.commitLog?.length ? { commitLog: s.commitLog } : {}),
+    ...(s.prLog?.length ? { prLog: s.prLog } : {}),
     live: s.live,
     ghost: s.ghost,
     ghostKind: s.ghostKind,
