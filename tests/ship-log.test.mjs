@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitOf, createShipLog } from "../scripts/transcript-utils.mjs";
+import { commitsOf, createShipLog } from "../scripts/transcript-utils.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "marey-ship-"));
 const CLAUDE = join(root, ".claude");
@@ -59,18 +59,44 @@ before(async () => {
 after(() => rmSync(root, { recursive: true, force: true }));
 
 test("a commit's subject is read from -m, a heredoc, or not at all", () => {
-  assert.equal(commitOf('git commit -q -m "chore: add config" -m "Trailer: x"'), "chore: add config");
-  assert.equal(commitOf("rtk proxy git add -A && rtk proxy git commit -q -F - <<'EOF'\nfeat(models): add fable 5.2\n\nBody\nEOF"), "feat(models): add fable 5.2");
-  assert.equal(commitOf("git commit -m \"$(cat <<'EOF'\nfix(parser): count once\n\nBody\nEOF\n)\""), "fix(parser): count once");
-  assert.equal(commitOf("cd x && FOO=1 git -C ../repo commit -am 'wip: half way'"), "wip: half way");
-  assert.equal(commitOf('git commit --message="feat: with equals"'), "feat: with equals");
+  assert.deepEqual(commitsOf('git commit -q -m "chore: add config" -m "Trailer: x"'), ["chore: add config"]);
+  assert.deepEqual(commitsOf("rtk proxy git add -A && rtk proxy git commit -q -F - <<'EOF'\nfeat(models): add fable 5.2\n\nBody\nEOF"), ["feat(models): add fable 5.2"]);
+  assert.deepEqual(commitsOf("git commit -m \"$(cat <<'EOF'\nfix(parser): count once\n\nBody\nEOF\n)\""), ["fix(parser): count once"]);
+  assert.deepEqual(commitsOf("cd x && FOO=1 git -C ../repo commit -am 'wip: half way'"), ["wip: half way"]);
+  assert.deepEqual(commitsOf('git commit --message="feat: with equals"'), ["feat: with equals"]);
   // A commit, with nothing to read: no new message, or one the shell still has to expand.
-  assert.equal(commitOf("git commit --amend --no-edit"), null);
-  assert.equal(commitOf('git commit -m "$MSG"'), null);
+  assert.deepEqual(commitsOf("git commit --amend --no-edit"), [null]);
+  assert.deepEqual(commitsOf('git commit -m "$MSG"'), [null]);
   // Not a commit: the words in a search or a string.
-  assert.equal(commitOf('rg -n "commits|git commit|prs" scripts'), undefined);
-  assert.equal(commitOf('echo "git commit"'), undefined);
-  assert.equal(commitOf("git status"), undefined);
+  assert.deepEqual(commitsOf('rg -n "commits|git commit|prs" scripts'), []);
+  assert.deepEqual(commitsOf('echo "git commit"'), []);
+  assert.deepEqual(commitsOf("git status"), []);
+});
+
+test("a heredoc's body is text, not commands, and a command can make several commits", () => {
+  // A script or a fixture written to a file commits nothing, whatever it holds.
+  assert.deepEqual(commitsOf("cat > notes.sh <<'EOF'\ngit add -A\ngit commit -m \"x\"\nEOF"), []);
+  assert.deepEqual(commitsOf("python3 - <<'PY'\nlog.command('a && git commit -m \"fake\"')\nPY\ngit commit -m \"real\""), ["real"]);
+  // The body of a commit's own message neither.
+  assert.deepEqual(commitsOf("git commit -F - <<'EOF'\ndocs: how to commit\n\ngit commit -m \"example\"\nEOF"), ["docs: how to commit"]);
+  // Two commits: each keeps its own message, the first its heredoc and not the second's -m.
+  assert.deepEqual(
+    commitsOf("git add src && git commit -q -F - <<'EOF'\nfix(journal): copy one project\n\nBody.\nEOF\ngit add -A dist && git commit -q -m \"build: rebuild dist\""),
+    ["fix(journal): copy one project", "build: rebuild dist"],
+  );
+  assert.deepEqual(commitsOf('git commit -m "one" && git commit --amend --no-edit && git commit -m "two"'), ["one", null, "two"]);
+  // Neither does a quoted string, however many lines it runs over; a quote in a comment opens none.
+  assert.deepEqual(commitsOf("node -e '\ncheck(\"cd x && git commit -m \\\"x\\\"\");\ngit commit -m \"y\"\n'"), []);
+  assert.deepEqual(commitsOf('echo "tests && git commit"; git commit -m "it\'s done"'), ["it's done"]);
+  assert.deepEqual(commitsOf("# don't skip the hook\ngit commit -m \"real\""), ["real"]);
+  // A here-string and a shift open no heredoc.
+  assert.deepEqual(commitsOf('grep -c x <<< "$OUT" && git commit -m "after a here-string"'), ["after a here-string"]);
+  const log = createShipLog();
+  log.command("cat > t.sh <<'EOF'\ngh pr create --title \"fake\"\nEOF", 1);
+  const both = log.command('git commit -m "one" && git commit -m "two"', 2);
+  log.result(log.command('git commit -m "three" && git commit -m "four"', 3), "hook failed", true);
+  assert.equal(both.commits.length, 2);
+  assert.deepEqual(log.snapshot(), { commitLog: [{ tsMs: 2, subject: "one", msgId: null }, { tsMs: 2, subject: "two", msgId: null }], prLog: [] });
 });
 
 test("the log keeps commits that went through and the pull requests that were opened", () => {

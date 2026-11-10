@@ -17,7 +17,7 @@ versioning follows [SemVer](https://semver.org/).
 ### Fixed
 
 - Sessions on Fable, Mythos, Opus 5 and 5.5 or Sonnet 5.5 that stayed under 200k tokens were read against a 200k context window unless the status line had reported its size, so their context fill, context score and the Timeline's window line were up to five times too pessimistic. These models only run at 1M in Claude Code: the window now comes from the model's row when no status line snapshot says otherwise. `models.json` takes an optional `window` for a model the table doesn't have yet.
-- A command that only mentioned `git commit` (a search for it, an `echo`) counted as a commit, and `git -C <dir> commit` did not.
+- A command that only mentioned `git commit` (a search for it, an `echo`, a script or a file written through a heredoc) counted as a commit, `git -C <dir> commit` did not, and a command that made several commits counted as one.
 
 ### Planned
 

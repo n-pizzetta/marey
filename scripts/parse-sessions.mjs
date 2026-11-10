@@ -614,8 +614,8 @@ function createTranscriptParser(path, sidechain) {
         absEvents.push({ tsMs, kind: SUBAGENT_TOOLS.has(c.name) ? "agent" : "tool", tool: name, label: name });
         const shipped = c.name === "Bash" && typeof input.command === "string" ? ship.command(input.command, tsMs, msgId) : null;
         if (shipped && c.id) shippedByCall.set(c.id, shipped);
-        if (shipped?.commit) {
-          commits++;
+        if (shipped?.commits.length) {
+          commits += shipped.commits.length;
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
         if (c.name === "Bash" && typeof input.command === "string") {
