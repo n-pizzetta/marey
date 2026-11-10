@@ -244,11 +244,12 @@ export const prLabel = (p: JournalPr) => `PR${p.number ? ` #${p.number}` : ""}${
 /**
  * A day as Markdown, to paste into a standup or a note: a heading, then each project with its
  * sessions, and under each session its pull requests and commits. No figures but the time spent:
- * what was done, not what it cost.
+ * what was done, not what it cost. With `only`, that project alone: a day often holds work for
+ * several clients, and a note for one should not carry the others'.
  */
-export function journalMarkdown(day: JournalDay): string {
+export function journalMarkdown(day: JournalDay, only?: JournalProject): string {
   const lines = [`## ${new Date(day.startMs).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}`];
-  for (const p of day.projects) {
+  for (const p of only ? [only] : day.projects) {
     lines.push("", `**${p.project}** (${formatLeft(p.activeMs)})`);
     for (const e of p.sessions) {
       lines.push(`- ${e.headline}`);
