@@ -149,6 +149,8 @@ test("a day copies as Markdown: projects, sessions, and what each shipped", () =
       "",
     ].join("\n"),
   );
+  // One project alone: nothing of the day's other projects goes with it.
+  assert.equal(journalMarkdown(day, day.projects[1]), ["## Monday 9 November", "", "**web** (12m)", "- Review the toggle", ""].join("\n"));
 });
 
 test("days are named from today", () => {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Session } from "../types";
-import { buildJournal, dayLabel, journalMarkdown, prLabel, type JournalDay, type JournalSession } from "../utils/journal";
+import { buildJournal, dayLabel, journalMarkdown, prLabel, type JournalDay, type JournalProject, type JournalSession } from "../utils/journal";
 import { projectColor } from "../utils/fleetStats";
 import { formatCost } from "../utils/format";
 import { formatLeft } from "../utils/planFormat";
@@ -64,6 +64,7 @@ function Day({ day, now, onSelectSession }: { day: JournalDay; now: number; onSe
             <span className="project-dot" style={{ background: projectColor(p.project) }} aria-hidden="true" />
             <span className="journal-project-name">{p.project}</span>
             <span className="journal-project-time tabular" title="Time with at least one of its sessions at work">{formatLeft(p.activeMs)}</span>
+            {day.projects.length > 1 && <CopyDay day={day} project={p} />}
           </div>
           <ul className="journal-sessions">
             {p.sessions.map((e) => (
@@ -114,18 +115,29 @@ function Entry({ entry: e, onSelectSession }: { entry: JournalSession; onSelectS
   );
 }
 
-function CopyDay({ day }: { day: JournalDay }) {
+/**
+ * Copies a day as Markdown: one project of it, or all of them. A day with several projects says so
+ * on the button, so what goes into a client's channel is never more than what was meant.
+ */
+function CopyDay({ day, project }: { day: JournalDay; project?: JournalProject }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(journalMarkdown(day));
+      await navigator.clipboard.writeText(journalMarkdown(day, project));
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch { /* clipboard blocked: nothing to do */ }
   };
+  const several = day.projects.length > 1;
+  const label = project ? "Copy" : several ? `Copy all ${day.projects.length} projects` : "Copy as Markdown";
+  const title = project
+    ? `Copy ${project.project} alone as Markdown: its sessions, commits and pull requests that day`
+    : several
+      ? `Copy the whole day as Markdown: the sessions, commits and pull requests of all ${day.projects.length} projects`
+      : "Copy this day as Markdown: sessions, commits and pull requests";
   return (
-    <button className="journal-copy" onClick={copy} title="Copy this day as Markdown: projects, sessions, commits and pull requests">
-      {copied ? "Copied" : "Copy as Markdown"}
+    <button className="journal-copy" onClick={copy} title={title}>
+      {copied ? "Copied" : label}
     </button>
   );
 }
