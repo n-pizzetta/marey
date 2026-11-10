@@ -66,6 +66,12 @@ const NAV_ICONS: Record<Page, ReactNode> = {
       <path d="M4 12l8 4 8-4M4 16l8 4 8-4" />
     </>
   ),
+  journal: (
+    <>
+      <path d="M6.5 4h10A1.5 1.5 0 0 1 18 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-10V4z" />
+      <path d="M6.5 4v16M10 8.5h4.5M10 12h4.5" />
+    </>
+  ),
 };
 
 /** Brand, page navigation, plan usage and the settings menu: the one fixed bar of the app. */
