@@ -310,8 +310,8 @@ export async function parseCopilotEvents(path) {
       const shipped = SHELL_TOOLS.has(name) && typeof args.command === "string" ? ship.command(args.command, tsMs) : null;
       if (SHELL_TOOLS.has(name) && typeof args.command === "string") {
         countShellKinds(args.command, shell);
-        if (shipped?.commit) {
-          commits++;
+        if (shipped?.commits.length) {
+          commits += shipped.commits.length;
           absEvents.push({ tsMs, kind: "commit", label: "git commit" });
         }
       }

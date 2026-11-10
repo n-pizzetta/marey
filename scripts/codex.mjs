@@ -277,8 +277,8 @@ export async function parseCodexRollout(path) {
     const shipped = command ? ship.command(command, tsMs) : null;
     if (command) {
       countShellKinds(command, shell);
-      if (shipped?.commit) {
-        commits++;
+      if (shipped?.commits.length) {
+        commits += shipped.commits.length;
         absEvents.push({ tsMs, kind: "commit", label: "git commit" });
       }
     }
