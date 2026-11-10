@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Prices for Claude Fable 5.2 and Mythos 5.2 ($8 / $40 per million tokens, cache reads $0.20) and for GPT-6.1 Sol and Terra. Fable 5.2 sessions were priced like Fable 5.1, 25% too high, and GPT-6.1 ones like GPT-5.4. The bare `fable` and `mythos` aliases now mean 5.2.
+- Fast mode is priced: a Claude Code turn made in fast mode counts at twice its model's rates, as the API bills it, and shows as its own model (`Opus 5.5 (fast)`) in the model mix. It was priced at the standard rate, half its API value.
+- Now: each plan bar says where it is heading. For the 5h window, from the last hour's pace: `limit at 16:40, 50m before the reset`, naming the running session behind most of it when several run, or `≈ 78% at the reset`. For the week and the month, from their pace so far. The hatched stretch of the bar is what the pace would still fill. It replaces "ahead of pace" on the cards. A projection, not a prediction: checked on 37 recorded 5h windows, it lands within about 5 points with under 2 hours left, and is rough beyond.
+- Journal: a page of what was done each day, by project. Each session with a readable title, the pull requests it opened (linked) and the commits it made, the time spent (sessions running side by side count once), and "Copy as Markdown" to paste the day into a standup. Claude Code, Codex and Copilot CLI.
+- Claude Code sessions are named by the title Claude Code gives them (the one in the terminal's title bar) when you set none, instead of their first prompt.
+
+### Fixed
+
+- Sessions on Fable, Mythos, Opus 5 and 5.5 or Sonnet 5.5 that stayed under 200k tokens were read against a 200k context window unless the status line had reported its size, so their context fill, context score and the Timeline's window line were up to five times too pessimistic. These models only run at 1M in Claude Code: the window now comes from the model's row when no status line snapshot says otherwise. `models.json` takes an optional `window` for a model the table doesn't have yet.
+- A command that only mentioned `git commit` (a search for it, an `echo`) counted as a commit, and `git -C <dir> commit` did not.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

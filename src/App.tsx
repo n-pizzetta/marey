@@ -14,6 +14,7 @@ import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
 import { HealthPage } from "./pages/HealthPage";
 import { ContextPage } from "./pages/ContextPage";
+import { JournalPage } from "./pages/JournalPage";
 import { loadSessions, loadSessionDetail, type DataSource } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
 import { detectedProviders, isProvider, resolveProvider, sessionProvider, type Provider } from "./utils/providers";
@@ -520,6 +521,7 @@ function App() {
         {page === "context" && (
           <ContextPage allSessions={allSessions} provider={provider} project={contextProject} onProjectChange={setContextProject} generatedAt={generatedAt} />
         )}
+        {page === "journal" && <JournalPage sessions={providerSessions} onSelectSession={setSelectedId} />}
       </main>
       {showClaude && analysisSpike && (
         <SpikeAnalysisOverlay

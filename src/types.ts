@@ -123,6 +123,10 @@ export interface Session {
   subAgents: number;
   filesChanged: number;
   commits: number;
+  /** Commits the session made (sub-agents included), oldest first: time (epoch ms) and subject. */
+  commitLog?: Array<{ at: number; subject: string }>;
+  /** Pull requests it opened: the URL `gh pr create` printed, and the title it was given. */
+  prLog?: Array<{ at: number; url: string; title: string | null }>;
   /** Bash commands by kind (main thread only); detail payload only. */
   shell?: { prs: number; tests: number; lints: number; infra: number };
   live?: boolean;

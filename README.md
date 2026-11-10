@@ -25,7 +25,7 @@ Marey reads the session data Claude Code already writes under `~/.claude/` (Code
 
 ## Features
 
-**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). *Which session is using it?* Every bar is split by running session: point at a slice to see which session it is, or at a session on the board below to light up its slice. The board groups running sessions by what they need from you (a question, a permission, your turn) and shows each one's share of the limit. Under a Claude Code session, its sub-agents at work: what each was given, its last call and how long it has run. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup (Codex's are also asked live, once a minute, as its own TUI does); Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
+**Now: your plans and your running sessions.** The home page answers two questions. *How much of each plan have I used?* One card per provider: Claude Code's and Codex's 5-hour and weekly windows, Copilot CLI's monthly quota of AI credits, each with its reset time and a tick for the time elapsed (a fill past it runs faster than time). Under the bar, where it is heading: `At the last hour's pace: limit at 16:40, 50m before the reset`, with the running session behind most of it, or `≈ 78% at the reset`; the hatched stretch of the bar is what the pace would still fill. *Which session is using it?* Every bar is split by running session: point at a slice to see which session it is, or at a session on the board below to light up its slice. The board groups running sessions by what they need from you (a question, a permission, your turn) and shows each one's share of the limit. Under a Claude Code session, its sub-agents at work: what each was given, its last call and how long it has run. Codex and Copilot CLI log their limits in their own session files, so they show up with no setup (Codex's are also asked live, once a minute, as its own TUI does); Claude Code's need [`/marey:limits`](#as-a-claude-code-plugin).
 
 <table>
 <tr>
@@ -70,6 +70,8 @@ Running sessions show up in real time with the current tool, context fill and pr
 ### Usage &amp; Health
 
 **Usage**: what is using the current 5-hour window (by project, session and prompt), then the history over the range you pick: tokens over time, project league, model mix, tools and the heaviest prompts. **Health**: recommendations backed by your own sessions, health checks and anomaly flags.
+
+**Journal**: what you and your agents did each day, by project. Every session with a readable title, the pull requests it opened and the commits it made, and a button that copies the day as Markdown for a standup or a note. Claude Code, Codex and Copilot CLI sessions side by side.
 
 **Context**: for one project, what your agents have in mind when a session starts (the files read in full, the memory index and the memories behind it, green when re-read lately), session by session, with each sub-agent's brief and what it received, and what sessions left on disk that nobody committed.
 
@@ -228,17 +230,17 @@ The server only listens on `127.0.0.1` and refuses state-changing requests from 
 
 ## Pricing
 
-Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). Copilot CLI sessions are priced the same way, plus the AI credits Copilot CLI logged for each request, which is what its monthly quota counts. The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model.
+Costs are estimates at Anthropic's and OpenAI's public API rates (no batch or negotiated discounts; on a Pro/Max plan they are an API-equivalent value, not what you pay). Copilot CLI sessions are priced the same way, plus the AI credits Copilot CLI logged for each request, which is what its monthly quota counts. The table lives in [`scripts/models.mjs`](./scripts/models.mjs) and every turn is priced with its own model; a Claude Code turn made in fast mode counts at twice its model's rates and shows as its own line (`Opus 5.5 (fast)`).
 
 A model missing from the table still gets a readable name and is priced like the latest model of its family. Costs that include it are marked `~` in the dashboard. To fix one without waiting for a release, add it to `~/.claude/marey/models.json` (prices in USD per million tokens; picked up on the next refresh):
 
 ```json
 {
-  "claude-opus-6": { "label": "Opus 6", "in": 6, "out": 30, "cacheRead": 0.6 }
+  "claude-opus-6": { "label": "Opus 6", "in": 6, "out": 30, "cacheRead": 0.6, "window": 1000000 }
 }
 ```
 
-Cache writes are derived from `in` (1.25x for the 5-minute TTL, 2x for 1 hour). Entries override built-in rows with the same id.
+Cache writes are derived from `in` (1.25x for the 5-minute TTL, 2x for 1 hour). `label` and `window` are optional: `window` is the model's context window in tokens, for the context score of sessions that never showed it in the status line. Entries override built-in rows with the same id.
 
 ---
 

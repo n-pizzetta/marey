@@ -7,25 +7,36 @@
  * rates). Cache writes are derived from the input rate: 1.25x (5-minute TTL),
  * 2x (1-hour TTL). Cache reads vary by model, so they are listed. A row with
  * `longPrompt` bills a request whose prompt (input + cache reads + cache
- * writes) is over `over` tokens at that tier instead (Haiku 5.5).
+ * writes) is over `over` tokens at that tier instead (Haiku 5.5). A request
+ * made in fast mode costs twice every rate of its model (`withSpeed`).
+ *
+ * `window` is the context window of a model that runs at that size in Claude
+ * Code whatever its id says (`contextWindowOf`): Fable, Mythos, Opus 5.x and
+ * Sonnet 5.5, whose transcripts hold prompts well past 200k with no `[1m]` in
+ * the id. Rows without it (Sonnet 5 and Haiku 5.5 included, not seen past
+ * 200k yet) leave the window to be inferred.
  *
  * When Anthropic or OpenAI ships a model: add a row here. Unknown ids still get a
  * readable name (see normalizeModel) and the latest price of their family.
  */
+const M = 1_000_000;
+
 export const MODELS = {
-  "fable-5.1":  { label: "Fable 5.1",  in: 10, out: 50, cacheRead: 0.25 },
-  "fable-5":    { label: "Fable 5",    in: 10, out: 50, cacheRead: 1 },
-  "mythos-5.1": { label: "Mythos 5.1", in: 10, out: 50, cacheRead: 0.25 },
-  "mythos-5":   { label: "Mythos 5",   in: 10, out: 50, cacheRead: 1 },
-  "opus-5.5":   { label: "Opus 5.5",   in: 4,  out: 20, cacheRead: 0.2 },
-  "opus-5":     { label: "Opus 5",     in: 5,  out: 25, cacheRead: 0.5 },
+  "fable-5.2":  { label: "Fable 5.2",  in: 8,  out: 40, cacheRead: 0.2, window: M },
+  "fable-5.1":  { label: "Fable 5.1",  in: 10, out: 50, cacheRead: 0.25, window: M },
+  "fable-5":    { label: "Fable 5",    in: 10, out: 50, cacheRead: 1, window: M },
+  "mythos-5.2": { label: "Mythos 5.2", in: 8,  out: 40, cacheRead: 0.2, window: M },
+  "mythos-5.1": { label: "Mythos 5.1", in: 10, out: 50, cacheRead: 0.25, window: M },
+  "mythos-5":   { label: "Mythos 5",   in: 10, out: 50, cacheRead: 1, window: M },
+  "opus-5.5":   { label: "Opus 5.5",   in: 4,  out: 20, cacheRead: 0.2, window: M },
+  "opus-5":     { label: "Opus 5",     in: 5,  out: 25, cacheRead: 0.5, window: M },
   "opus-4.8":   { label: "Opus 4.8",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.7":   { label: "Opus 4.7",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.6":   { label: "Opus 4.6",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.5":   { label: "Opus 4.5",   in: 5,  out: 25, cacheRead: 0.5 },
   "opus-4.1":   { label: "Opus 4.1",   in: 15, out: 75, cacheRead: 1.5 },
   "opus-4":     { label: "Opus 4",     in: 15, out: 75, cacheRead: 1.5 },
-  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.1 },
+  "sonnet-5.5": { label: "Sonnet 5.5", in: 2,  out: 10, cacheRead: 0.1, window: M },
   "sonnet-5":   { label: "Sonnet 5",   in: 2,  out: 10, cacheRead: 0.2 },
   "sonnet-4.6": { label: "Sonnet 4.6", in: 3,  out: 15, cacheRead: 0.3 },
   "sonnet-4.5": { label: "Sonnet 4.5", in: 3,  out: 15, cacheRead: 0.3 },
@@ -36,11 +47,13 @@ export const MODELS = {
   // Retired 3.x models (Sonnet 3.7 / 3.5, Opus 3, Haiku 3) have no published price any more:
   // they fall back to their family's latest, marked as an estimate.
   // OpenAI rows: developers.openai.com/api/docs/models/<id>. Prompts over 272k
-  // input tokens and fast mode cost more; not modelled (no tier in rollouts).
+  // input tokens and OpenAI's fast mode cost more; not modelled (no tier in rollouts).
+  "gpt-6.1-sol":   { label: "GPT-6.1 Sol",   in: 2,   out: 10,  cacheRead: 0.1 },
+  "gpt-6.1-terra": { label: "GPT-6.1 Terra", in: 1,   out: 5,   cacheRead: 0.05 },
   "gpt-6-astra":   { label: "GPT-6 Astra",   in: 10,  out: 50,  cacheRead: 1 },
   "gpt-6-sol":     { label: "GPT-6 Sol",     in: 2,   out: 10,  cacheRead: 0.2 },
   "gpt-6-luna":    { label: "GPT-6 Luna",    in: 0.1, out: 0.5, cacheRead: 0.01 },
-  // Promotional price "at least through November 21, 2026"; list price is $5 / $30.
+  // Promotional price "until November 30, 2026"; list price is $5 / $30.
   "gpt-5.6-sol":   { label: "GPT-5.6 Sol",   in: 4,   out: 20,  cacheRead: 0.4 },
   "gpt-5.6-terra": { label: "GPT-5.6 Terra", in: 2,   out: 12,  cacheRead: 0.2 },
   "gpt-5.6-luna":  { label: "GPT-5.6 Luna",  in: 0.2, out: 1.2, cacheRead: 0.02 },
@@ -54,8 +67,8 @@ export const DEFAULT_MODEL = "opus-5.5";
 
 /** What Claude Code's bare aliases (`opus`, `sonnet[1m]`, …) resolve to today. */
 const FAMILY_LATEST = {
-  fable: "fable-5.1",
-  mythos: "mythos-5.1",
+  fable: "fable-5.2",
+  mythos: "mythos-5.2",
   opus: "opus-5.5",
   sonnet: "sonnet-5.5",
   haiku: "haiku-5.5",
@@ -84,8 +97,9 @@ export function normalizeModel(id) {
 /**
  * Replace user overrides (from ~/.claude/marey/models.json) on top of the
  * built-in table. Keys may be raw ids (`claude-opus-6`) or normalized
- * (`opus-6`); rows need numeric `in`, `out`, `cacheRead` ($/MTok) and an
- * optional `label`. Invalid rows are skipped. Returns the accepted rows.
+ * (`opus-6`); rows need numeric `in`, `out`, `cacheRead` ($/MTok) and take an
+ * optional `label` and `window` (context window in tokens). Invalid rows are
+ * skipped. Returns the accepted rows.
  */
 export function setModelOverrides(overrides) {
   for (const k of Object.keys(MODELS)) delete MODELS[k];
@@ -97,14 +111,44 @@ export function setModelOverrides(overrides) {
     const valid = v && [v.in, v.out, v.cacheRead].every((n) => typeof n === "number" && n >= 0);
     if (!id || key.startsWith("$") || !valid) continue;
     const label = typeof v.label === "string" && v.label ? v.label : modelLabel(id);
-    MODELS[id] = accepted[id] = { label, in: v.in, out: v.out, cacheRead: v.cacheRead };
+    const window = Number.isFinite(v.window) && v.window > 0 ? { window: v.window } : {};
+    MODELS[id] = accepted[id] = { label, in: v.in, out: v.out, cacheRead: v.cacheRead, ...window };
   }
   return accepted;
 }
 
+const FAST = "-fast";
+/** Fast mode bills the same model at twice every rate, cache reads and writes included. */
+const FAST_RATE = 2;
+
+/**
+ * A request's model with the speed it ran at (`usage.speed`): fast mode has its own price list, so
+ * it gets an id of its own, `opus-5.5-fast`, and everything that prices or names a turn by its
+ * model follows. Any other speed leaves the model as it is.
+ */
+export function withSpeed(model, speed) {
+  return model && speed === "fast" ? `${model}${FAST}` : model;
+}
+
+/** `opus-5.5-fast` → `opus-5.5`: the model itself, whatever speed it ran at. */
+export function baseModel(model) {
+  const m = String(model ?? "");
+  return m.endsWith(FAST) ? m.slice(0, -FAST.length) : m;
+}
+
 /** False when the model has no row and its cost is an estimate (family fallback). */
 export function isKnownModel(model) {
-  return !!model && Object.hasOwn(MODELS, model);
+  return !!model && Object.hasOwn(MODELS, baseModel(model));
+}
+
+/**
+ * The context window Claude Code gives a model, when its row says: the transcript doesn't, and a
+ * session that stayed under 200k looks the same at either size. An override that only changes
+ * prices keeps the built-in window. Null when unknown.
+ */
+export function contextWindowOf(model) {
+  const base = baseModel(model);
+  return MODELS[base]?.window ?? BUILTIN[base]?.window ?? null;
 }
 
 /** What a request's prompt counts for a `longPrompt` tier: its input, cache reads and cache writes. */
@@ -117,13 +161,17 @@ export function promptTokens(t) {
  * size (`promptTokens`): past a model's `longPrompt.over`, that tier applies.
  */
 export function priceFor(model, prompt = 0) {
-  const row = MODELS[model] ?? MODELS[FAMILY_LATEST[String(model).split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
+  const base = baseModel(model);
+  const row = MODELS[base] ?? MODELS[FAMILY_LATEST[base.split("-")[0]]] ?? MODELS[DEFAULT_MODEL];
   const p = row.longPrompt && prompt > row.longPrompt.over ? row.longPrompt : row;
-  return { in: p.in, out: p.out, cacheRead: p.cacheRead, cacheWrite: p.in * 1.25, cacheWrite1h: p.in * 2 };
+  const x = base === String(model ?? "") ? 1 : FAST_RATE;
+  return { in: p.in * x, out: p.out * x, cacheRead: p.cacheRead * x, cacheWrite: p.in * 1.25 * x, cacheWrite1h: p.in * 2 * x };
 }
 
 export function modelLabel(model) {
   if (!model) return "unknown";
+  const base = baseModel(model);
+  if (base !== model) return `${modelLabel(base)} (fast)`;
   if (MODELS[model]) return MODELS[model].label;
   if (model.startsWith("gpt-")) return `GPT-${model.slice(4)}`;
   if (model.startsWith("codex-")) return `Codex ${model.slice(6).replace(/-/g, " ")}`;

@@ -22,10 +22,10 @@ before(async () => {
   process.env.CLAUDE_CONFIG_DIR = CLAUDE;
   process.env.CODEX_HOME = CODEX;
   process.env.COPILOT_HOME = COPILOT;
-  // A status line snapshot of one Fable session: its model's window is 1M.
+  // A status line snapshot of one Fable session, at a size its model's row doesn't have.
   const fable = firstSessionOf("claude-fable-5-1");
   mkdirSync(join(CLAUDE, "marey", "live"), { recursive: true });
-  writeFileSync(join(CLAUDE, "marey", "live", `${fable}.json`), JSON.stringify({ v: 1, sessionId: fable, capturedAt: Date.now(), model: "claude-fable-5-1", costUsd: null, context: { usedPct: 4, size: 1_000_000, tokens: 40_000 }, cache: null }));
+  writeFileSync(join(CLAUDE, "marey", "live", `${fable}.json`), JSON.stringify({ v: 1, sessionId: fable, capturedAt: Date.now(), model: "claude-fable-5-1", costUsd: null, context: { usedPct: 8, size: 500_000, tokens: 40_000 }, cache: null }));
   const { parseAllSessions } = await import("../scripts/parse-sessions.mjs");
   parsed = await parseAllSessions();
   claude = parsed.sessions.filter((s) => s.agent === "claude");
@@ -312,13 +312,21 @@ test("recommends the seeded frictions", async () => {
   for (const id of ["cause:zsh-nomatch", "cause:playwright-profile", "denials", "waits"]) assert.ok(ids.includes(id), id);
 });
 
-test("takes the context window from the status line snapshots, for the session and its model", () => {
+test("takes the context window from the status line snapshots, for the session and its model, else from the model's row", () => {
   const fable = claude.filter((s) => s.model === "fable-5.1");
   const others = claude.filter((s) => s.model !== "fable-5.1");
   assert.ok(fable.length > 1 && others.length > 0);
+  // What the status line reported wins over the row's 1M.
   for (const s of fable) {
-    assert.equal(s.contextWindow, 1_000_000, `session ${s.id}`);
-    if (s.quality) assert.equal(s.quality.window, 1_000_000);
+    assert.equal(s.contextWindow, 500_000, `session ${s.id}`);
+    if (s.quality) assert.equal(s.quality.window, 500_000);
   }
-  for (const s of others) assert.equal(s.contextWindow, undefined, `session ${s.id}`);
+  // No snapshot for the others. Opus 5.5 and Sonnet 5.5 only run at 1M, which their rows say, where a
+  // peak under 200k used to imply 200k; Haiku 4.5 has no such row and stays inferred.
+  const row = { "opus-5.5": 1_000_000, "sonnet-5.5": 1_000_000, "haiku-4.5": undefined };
+  assert.deepEqual([...new Set(others.map((s) => s.model))].sort(), Object.keys(row).sort());
+  for (const s of others) {
+    assert.equal(s.contextWindow, row[s.model], `session ${s.id}`);
+    if (s.quality && row[s.model]) assert.equal(s.quality.window, row[s.model]);
+  }
 });

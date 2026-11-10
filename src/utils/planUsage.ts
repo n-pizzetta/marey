@@ -4,6 +4,7 @@ import { costOfTokens, FIVE_HOUR_MS, sumTokens } from "./fleetStats";
 import { SEVEN_DAY_MS, type LimitWindow, type ProviderLimits } from "./rateLimits";
 import { formatCost, formatTokens } from "./format";
 import { formatCredits, pctText } from "./planFormat";
+import { forecastWindow, RECENT_LONG_MS, RECENT_SHORT_MS, type Forecast, type ForecastInput } from "./forecast";
 
 export type PlanWindowKey = "fiveHour" | "sevenDay" | "month";
 
@@ -39,6 +40,10 @@ export interface PlanWindow {
   /** Heaviest first. */
   shares: SessionShare[];
   total: { tokens: number; cost: number; credits: number; weight: number };
+  /** Where the window is heading if the pace holds (`utils/forecast.ts`); null with nothing to project. */
+  forecast: Forecast | null;
+  /** 5h window, several sessions running: the one behind at least half of the last hour's use. */
+  driver?: { session: Session; part: number };
 }
 
 export interface PlanUsage {
@@ -136,7 +141,7 @@ function makeWindow(
   const label = key === "fiveHour" ? "5h window" : key === "sevenDay" ? "Week" : "Month";
   const usedPct = limit?.usedPct ?? null;
   const base = { key, label, usedPct, resetsAt: limit?.resetsAt ?? null, fromMs, spanMs, estimated: false, ...extra };
-  if (fromMs === null) return { ...base, shares: [], total: { tokens: 0, cost: 0, credits: 0, weight: 0 } };
+  if (fromMs === null) return { ...base, shares: [], total: { tokens: 0, cost: 0, credits: 0, weight: 0 }, forecast: null };
   const { rows, total, key: weigh } = sharesIn(sessions, fromMs, now, key === "month" ? "credits" : "weight", READ_WEIGHT[provider]);
   const of = weigh === "credits" ? (extra.used ?? total.credits) : total[weigh];
   const shares = rows.map((r) => {
@@ -147,7 +152,20 @@ function makeWindow(
     } else if (usedPct !== null) limitPct = part * usedPct;
     return { ...r, part, limitPct };
   });
-  return { ...base, shares, total };
+  // The 5h window is projected from its last hour, the week and the month from their pace so far.
+  let recent: ForecastInput["recent"];
+  let driver: PlanWindow["driver"];
+  if (key === "fiveHour" && usedPct !== null) {
+    const long = sharesIn(sessions, Math.max(fromMs, now - RECENT_LONG_MS), now, "weight", READ_WEIGHT[provider]);
+    const short = sharesIn(sessions, Math.max(fromMs, now - RECENT_SHORT_MS), now, "weight", READ_WEIGHT[provider]);
+    recent = { total: total[weigh], short: short.total[weigh], long: long.total[weigh] };
+    const running = long.rows.filter((r) => r.session.live);
+    const top = running.reduce<(typeof running)[number] | null>((best, r) => (best && best[weigh] >= r[weigh] ? best : r), null);
+    const part = top && long.total[weigh] > 0 ? top[weigh] / long.total[weigh] : 0;
+    if (top && running.length > 1 && part >= 0.5) driver = { session: top.session, part };
+  }
+  const forecast = forecastWindow({ usedPct, resetsAt: base.resetsAt, fromMs, spanMs, recent }, now);
+  return { ...base, shares, total, forecast, ...(driver ? { driver } : {}) };
 }
 
 /** A provider's plan windows and what each session used of them; `sessions` are that provider's. */

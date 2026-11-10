@@ -14,6 +14,7 @@ import { createContextCollector } from "./agent-context.mjs";
 import {
   addTokens,
   countShellKinds,
+  createShipLog,
   emptyTokens,
   firstLineSummary,
   IDLE_CAP_MS,
@@ -217,6 +218,7 @@ export async function parseCodexRollout(path) {
   const shell = { prs: 0, tests: 0, lints: 0, infra: 0 };
   let userMessages = 0;
   let commits = 0;
+  const ship = createShipLog();
   let model = null;
   let firstModel = null;
   let firstTs = null;
@@ -272,9 +274,10 @@ export async function parseCodexRollout(path) {
     const event = { tsMs, kind: SUBAGENT_TOOLS.has(rawName) ? "agent" : "tool", tool: name, label: name };
     absEvents.push(event);
     const command = commandOf(input);
+    const shipped = command ? ship.command(command, tsMs) : null;
     if (command) {
       countShellKinds(command, shell);
-      if (/\bgit\s+commit\b/.test(command)) {
+      if (shipped?.commit) {
         commits++;
         absEvents.push({ tsMs, kind: "commit", label: "git commit" });
       }
@@ -307,7 +310,7 @@ export async function parseCodexRollout(path) {
       if (full.length > 160) entry.full = full.slice(0, 8000);
       toolSequence.push(entry);
     }
-    if (id) calls.set(id, { name, tools: into, index: into.length - 1, event, entry });
+    if (id) calls.set(id, { name, tools: into, index: into.length - 1, event, entry, shipped });
   };
 
   /** Renames a recorded call everywhere it was counted (`raw` as in the tool sequence). */
@@ -325,6 +328,7 @@ export async function parseCodexRollout(path) {
   const onToolOutput = (p, out = readOutput(p)) => {
     if (!p.call_id) return;
     const { body, isError } = out;
+    ship.result(calls.get(p.call_id)?.shipped, body, isError);
     const prev = resultById.get(p.call_id);
     resultById.set(p.call_id, {
       text: body.slice(0, 240),
@@ -398,6 +402,7 @@ export async function parseCodexRollout(path) {
   };
 
   const markError = (callId) => {
+    ship.failed(calls.get(callId)?.shipped);
     const r = resultById.get(callId);
     if (r) r.isError = true;
     else resultById.set(callId, { text: "", truncated: false, isError: true, bytes: 0 });
@@ -579,6 +584,7 @@ export async function parseCodexRollout(path) {
     assistantMessages: turns.length,
     userMessages,
     commits,
+    ...ship.snapshot(),
     shell,
     model: firstModel,
     firstTs,

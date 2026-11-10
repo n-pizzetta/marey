@@ -1,0 +1,76 @@
+/* Journal page (pages/JournalPage.tsx): one card a day, projects inside, sessions with what they shipped */
+.journal-day {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--c-bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+
+.journal-day-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.journal-day-head h3 { margin: 0; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.015em; color: var(--c-text); }
+.journal-day-date { font-size: var(--fs-base); color: var(--c-text-dim); }
+.journal-day-stats { font-size: var(--fs-md); color: var(--c-text-soft); }
+.journal-day-cost { color: var(--c-text-faint); }
+.journal-copy {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--c-hairline-strong);
+  color: var(--c-text-dim);
+  white-space: nowrap;
+}
+.journal-copy:hover { color: var(--c-cyan); border-color: color-mix(in srgb, var(--c-cyan) 55%, transparent); }
+
+.journal-project { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--c-hairline); }
+.journal-project-head { display: flex; align-items: center; gap: 8px; }
+.journal-project-name { font-size: var(--fs-base); font-weight: 600; color: var(--c-text); }
+.journal-project-time { font-size: var(--fs-md); color: var(--c-text-dim); }
+
+.journal-sessions { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.journal-entry { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 4px 0; }
+.journal-entry-time { font-size: var(--fs-md); color: var(--c-text-faint); }
+.journal-entry-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.journal-entry-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.journal-entry-headline {
+  min-width: 0;
+  padding: 0;
+  font-size: var(--fs-base);
+  color: var(--c-text-soft);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-entry-headline:hover { color: var(--c-cyan); }
+.journal-entry-time-spent { margin-left: auto; padding-left: 8px; font-size: var(--fs-md); color: var(--c-text-faint); white-space: nowrap; }
+.journal-live { font-size: var(--fs-sm); color: var(--c-green); white-space: nowrap; }
+
+/* what the session shipped: commit subjects and pull requests, on a rail under its headline */
+.journal-shipped {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 4px;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-left: 1px solid var(--c-hairline-strong);
+}
+.journal-commit {
+  font-family: var(--f-mono);
+  font-size: var(--fs-md);
+  color: var(--c-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-pr { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journal-pr a { color: var(--c-cyan); text-decoration: none; }
+.journal-pr a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.journal-empty { margin: 0; font-size: var(--fs-base); color: var(--c-text-dim); }
+.journal-more { align-self: flex-start; }
