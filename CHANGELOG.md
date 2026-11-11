@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Now: the plan bars no longer hatch the stretch the pace would still fill: the part not used yet stays empty. The forecast stays as the line under the bar.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

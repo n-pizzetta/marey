@@ -95,8 +95,6 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
   const rest = Math.max(0, (known ? used : w.shares.length ? 100 : 0) - runningPts);
   const color = known ? limitColor(used / 100) : "var(--c-text)";
   const level = w.forecast ? forecastLevel(w.forecast, w, now) : "flat";
-  // The stretch of the bar the pace would still fill by the reset.
-  const ahead = w.forecast && level !== "flat" ? Math.min(100, w.forecast.atReset) - used : 0;
   // A slice only lights up in the card whose window the session used; elsewhere nothing dims.
   const pointed = running.find((s) => s.session.id === hovered) ?? null;
   const state = (id: string) => (pointed ? (id === pointed.session.id ? " on" : " off") : "");
@@ -149,7 +147,6 @@ function Meter({ window: w, colors, hovered, onHover, now, onSelectSession }: Me
             }
           />
         )}
-        {ahead > 0 && <span className={`plan-bar-ahead${level === "hit" ? " hit" : ""}${pointed ? " off" : ""}`} style={{ width: `${ahead}%` }} aria-hidden="true" />}
         {elapsed !== null && <span className="plan-bar-pace" style={{ left: `${elapsed * 100}%` }} title={`${Math.round(elapsed * 100)}% of the ${w.label.toLowerCase()} elapsed`} />}
       </div>
       {pointed ? (
