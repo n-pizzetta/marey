@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Session } from "../types";
 import { buildJournal, dayLabel, journalMarkdown, prLabel, type JournalDay, type JournalProject, type JournalSession } from "../utils/journal";
+import { TimeByGroup } from "../components/TimeByGroup";
 import { projectColor } from "../utils/fleetStats";
 import { formatCost } from "../utils/format";
 import { formatLeft } from "../utils/planFormat";
@@ -27,6 +28,7 @@ export function JournalPage({ sessions, onSelectSession }: Props) {
 
   return (
     <div className="page page-journal">
+      <TimeByGroup sessions={sessions} />
       <section className="page-section">
         <div className="page-section-head">
           <h2>Journal</h2>

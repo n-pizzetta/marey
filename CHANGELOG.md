@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Journal: time by client. On top of the page, the active time of this week, last week, this month or last month, by the folder sessions ran under: with projects in `~/work/<client>/<project>`, one line per client, which opens on its projects; what is outside goes under Other. The folder is found from where your sessions run; without such a layout, the lines are projects. "Export CSV" gives a line per day and client (date, hours in decimal, the projects behind them) to start a timesheet from. A client's time is the time with at least one of its sessions at work, so two clients worked side by side each count it.
+
 ### Changed
 
 - Now: the plan bars no longer hatch the stretch the pace would still fill: the part not used yet stays empty. The forecast stays as the line under the bar.

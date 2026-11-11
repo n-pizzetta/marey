@@ -74,3 +74,47 @@
 
 .journal-empty { margin: 0; font-size: var(--fs-base); color: var(--c-text-dim); }
 .journal-more { align-self: flex-start; }
+
+/* Time by folder (components/TimeByGroup.tsx): a period, a total, one line per folder that opens on its projects */
+.journal-time {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 16px;
+  background: var(--c-bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+.journal-time-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.journal-time-total { font-size: var(--fs-lg); font-weight: 650; letter-spacing: -0.015em; color: var(--c-text); }
+.journal-copy:disabled { opacity: 0.4; pointer-events: none; }
+.journal-time-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.journal-time-row {
+  display: grid;
+  grid-template-columns: 8px minmax(72px, 150px) minmax(0, 1fr) 76px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 0;
+  font-size: var(--fs-base);
+  color: var(--c-text-soft);
+  text-align: left;
+}
+.journal-time-row:not(:disabled):hover .journal-time-name { color: var(--c-cyan); }
+.journal-time-name { font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journal-time-bar { height: 6px; border-radius: 999px; background: var(--c-hairline); overflow: hidden; }
+.journal-time-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--c-text-faint); }
+.journal-time-value { text-align: right; color: var(--c-text); }
+.journal-time-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 8px 18px;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-left: 1px solid var(--c-hairline-strong);
+  font-size: var(--fs-md);
+  color: var(--c-text-dim);
+}
+.journal-time-projects li { display: flex; justify-content: space-between; gap: 12px; }
