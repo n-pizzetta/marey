@@ -10,6 +10,10 @@ versioning follows [SemVer](https://semver.org/).
 
 - Now: the plan bars no longer hatch the stretch the pace would still fill: the part not used yet stays empty. The forecast stays as the line under the bar.
 
+### Fixed
+
+- Journal: two projects of the same name in different folders (a `brain` under two clients) were shown as one, and copied together. They are two, named with their parent folder: `ADEO/brain`.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

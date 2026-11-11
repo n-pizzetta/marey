@@ -59,10 +59,10 @@ function Day({ day, now, onSelectSession }: { day: JournalDay; now: number; onSe
         <CopyDay day={day} />
       </header>
       {day.projects.map((p) => (
-        <section key={p.project} className="journal-project">
+        <section key={p.path} className="journal-project">
           <div className="journal-project-head">
             <span className="project-dot" style={{ background: projectColor(p.project) }} aria-hidden="true" />
-            <span className="journal-project-name">{p.project}</span>
+            <span className="journal-project-name">{p.label}</span>
             <span className="journal-project-time tabular" title="Time with at least one of its sessions at work">{formatLeft(p.activeMs)}</span>
             {day.projects.length > 1 && <CopyDay day={day} project={p} />}
           </div>
@@ -131,7 +131,7 @@ function CopyDay({ day, project }: { day: JournalDay; project?: JournalProject }
   const several = day.projects.length > 1;
   const label = project ? "Copy" : several ? `Copy all ${day.projects.length} projects` : "Copy as Markdown";
   const title = project
-    ? `Copy ${project.project} alone as Markdown: its sessions, commits and pull requests that day`
+    ? `Copy ${project.label} alone as Markdown: its sessions, commits and pull requests that day`
     : several
       ? `Copy the whole day as Markdown: the sessions, commits and pull requests of all ${day.projects.length} projects`
       : "Copy this day as Markdown: sessions, commits and pull requests";
