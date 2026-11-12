@@ -71,7 +71,7 @@ Running sessions show up in real time with the current tool, context fill and pr
 
 **Usage**: what is using the current 5-hour window (by project, session and prompt), then the history over the range you pick: tokens over time, project league, model mix, tools and the heaviest prompts. **Health**: recommendations backed by your own sessions, health checks and anomaly flags.
 
-**Journal**: what you and your agents did each day, by project. Every session with a readable title, the pull requests it opened and the commits it made, and a button that copies a day as Markdown for a standup or a note: one project alone, or the whole day. Claude Code, Codex and Copilot CLI sessions side by side.
+**Journal**: what you and your agents did each day, by project. Every session with a readable title, the pull requests it opened and the commits it made, and a button that copies a day as Markdown for a standup or a note: one project alone, or the whole day. On top, the time of the week or the month by client, when your projects sit in one folder per client (`~/work/<client>/<project>`), with a CSV export to start a timesheet from. Claude Code, Codex and Copilot CLI sessions side by side.
 
 **Context**: for one project, what your agents have in mind when a session starts (the files read in full, the memory index and the memories behind it, green when re-read lately), session by session, with each sub-agent's brief and what it received, and what sessions left on disk that nobody committed.
 

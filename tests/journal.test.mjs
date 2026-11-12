@@ -89,6 +89,20 @@ test("sessions running side by side count once in a project's and a day's time",
   assert.equal(Math.round(day.activeMs / MIN), 20);
 });
 
+test("two projects of the same name in different folders stay apart, named with their parent", () => {
+  const [day] = buildJournal(
+    [
+      session("brain", "Notes for one client", [at(9, 10), at(9, 10, 4)], { cwd: "/home/me/work/acme/brain", durationMs: 4 * MIN }),
+      session("brain", "Notes for another", [at(9, 11), at(9, 11, 4)], { cwd: "/home/me/work/globex/brain", durationMs: 6 * MIN }),
+      session("api", "Something else", [at(9, 12)], { cwd: "/home/me/work/acme/api", durationMs: 2 * MIN }),
+    ],
+    { now: NOW, days: 7 },
+  );
+  assert.deepEqual(day.projects.map((p) => [p.label, p.sessions.length]), [["globex/brain", 1], ["acme/brain", 1], ["api", 1]]);
+  // Copying one of them takes nothing of its namesake.
+  assert.equal(journalMarkdown(day, day.projects[1]), ["## Monday 9 November", "", "**acme/brain** (4m)", "- Notes for one client", ""].join("\n"));
+});
+
 test("a session over midnight is in both days, with each day's share of its time and its turns' value", () => {
   // Three turns 4 minutes apart before midnight (8 min of gaps), then two the next morning (4 min, after an idle night capped at 5).
   const s = session("api", "Late one", [at(8, 23, 40), at(8, 23, 44), at(8, 23, 48), at(9, 8, 0), at(9, 8, 4)], { durationMs: 34 * MIN });

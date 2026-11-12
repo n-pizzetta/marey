@@ -29,10 +29,17 @@ export interface JournalSession {
   cost: number;
   commits: Array<{ at: number; subject: string }>;
   prs: JournalPr[];
+  /** Its stretches of activity that day and their sum, to count sessions side by side once (`activeTogether`). */
+  spans: Span[];
+  gaps: number;
 }
 
 export interface JournalProject {
   project: string;
+  /** Its folder (the sessions' `cwd`): two projects of the same name in different folders stay apart. */
+  path: string;
+  /** Its name, with its parent folder when another project of the day has the same one: `ADEO/brain`. */
+  label: string;
   /** Time with at least one of its sessions at work: sessions running side by side count once. */
   activeMs: number;
   cost: number;
@@ -85,7 +92,7 @@ export function headlineOf(s: Session): string {
   return readable(s.summary) || s.liveName || "Untitled session";
 }
 
-type Span = [from: number, to: number];
+export type Span = [from: number, to: number];
 /** One session's activity on one day: the stretches between its events (capped like the parser's active time), their sum, API value and first event. */
 interface DayActivity {
   spans: Span[];
@@ -106,6 +113,19 @@ function covered(spans: Span[]): number {
   }
   return total;
 }
+
+/**
+ * The time `entries` were at work, overlaps counted once: the sum of their own times, scaled by
+ * how much of their stretches overlap. One session alone, or sessions one after the other, keep their sum.
+ */
+export function activeTogether(entries: JournalSession[]): number {
+  const sum = entries.reduce((n, e) => n + e.activeMs, 0);
+  const gaps = entries.reduce((n, e) => n + e.gaps, 0);
+  return gaps > 0 ? (sum * covered(entries.flatMap((e) => e.spans))) / gaps : sum;
+}
+
+/** `ADEO` for `/home/me/work/ADEO/brain`. */
+const parentName = (path: string) => path.split("/").filter(Boolean).at(-2) ?? "";
 
 /** A session's activity split by day. */
 function byDay(s: Session): Map<number, DayActivity> {
@@ -152,24 +172,18 @@ function byDay(s: Session): Map<number, DayActivity> {
  * spanning several days appears in each, with that day's share of its active time (the parser's
  * `durationMs`, split like the gaps between its events) and the API value of that day's turns.
  * A project's and a day's time is the time with at least one session at work: sessions running
- * side by side count once (`together`). Ghosts are left out. A commit or a pull request two
+ * side by side count once (`activeTogether`). Ghosts are left out. Projects go by folder, so two
+ * of the same name (a `brain` under two clients) are two. A commit or a pull request two
  * sessions both hold (a fork's copy) counts once.
  */
+/** What a session's project goes by: its folder, or its name when the transcript gave none. */
+const folderOf = (s: Session) => s.cwd || s.project || "unknown";
+
 export function buildJournal(sessions: Session[], { now, days = 7 }: { now: number; days?: number }): JournalDay[] {
   const today = new Date(dayStart(now));
   const since = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1)).getTime();
   const out = new Map<number, Map<string, JournalProject>>();
   const seenPr = new Set<string>();
-  const activity = new Map<JournalSession, DayActivity>();
-  /**
-   * The time `entries` were at work, overlaps counted once: the sum of their own times, scaled by
-   * how much of their stretches overlap. One session alone, or sessions one after the other, keep their sum.
-   */
-  const together = (entries: JournalSession[]) => {
-    const sum = entries.reduce((n, e) => n + e.activeMs, 0);
-    const gaps = entries.reduce((n, e) => n + (activity.get(e)?.gaps ?? 0), 0);
-    return gaps > 0 ? (sum * covered(entries.flatMap((e) => activity.get(e)?.spans ?? []))) / gaps : sum;
-  };
 
   // Oldest first, so the session a commit or a pull request is kept under is the one that made it first.
   const ordered = sessions
@@ -187,19 +201,18 @@ export function buildJournal(sessions: Session[], { now, days = 7 }: { now: numb
       let projects = out.get(key);
       if (!projects) out.set(key, (projects = new Map()));
       const name = s.project || "unknown";
-      let project = projects.get(name);
-      if (!project) projects.set(name, (project = { project: name, activeMs: 0, cost: 0, sessions: [] }));
-      const entry: JournalSession = { session: s, headline: headlineOf(s), firstAt: d.firstAt, activeMs: s.durationMs * share, cost: d.cost, commits: [], prs: [] };
+      let project = projects.get(folderOf(s));
+      if (!project) projects.set(folderOf(s), (project = { project: name, path: folderOf(s), label: name, activeMs: 0, cost: 0, sessions: [] }));
+      const entry: JournalSession = { session: s, headline: headlineOf(s), firstAt: d.firstAt, activeMs: s.durationMs * share, cost: d.cost, commits: [], prs: [], spans: d.spans, gaps: d.gaps };
       project.sessions.push(entry);
       project.cost += entry.cost;
-      activity.set(entry, d);
       mine.set(key, entry);
     }
     for (const c of s.commitLog ?? []) {
       const entry = mine.get(dayStart(c.at));
       if (!entry) continue;
       // The same subject within the same minute in the same project is one commit, read twice.
-      const twice = out.get(dayStart(c.at))?.get(s.project || "unknown")?.sessions.some((o) => o.commits.some((x) => x.subject === c.subject && Math.abs(x.at - c.at) < 60_000));
+      const twice = out.get(dayStart(c.at))?.get(folderOf(s))?.sessions.some((o) => o.commits.some((x) => x.subject === c.subject && Math.abs(x.at - c.at) < 60_000));
       if (!twice) entry.commits.push({ at: c.at, subject: c.subject });
     }
     for (const p of s.prLog ?? []) {
@@ -215,13 +228,15 @@ export function buildJournal(sessions: Session[], { now, days = 7 }: { now: numb
     .map(([startMs, projects]) => {
       for (const p of projects.values()) {
         p.sessions.sort((a, b) => a.firstAt - b.firstAt);
-        p.activeMs = together(p.sessions);
+        p.activeMs = activeTogether(p.sessions);
+        const namesakes = [...projects.values()].filter((o) => o.project === p.project).length;
+        if (namesakes > 1 && parentName(p.path)) p.label = `${parentName(p.path)}/${p.project}`;
       }
-      const list = [...projects.values()].sort((a, b) => b.activeMs - a.activeMs || (a.project < b.project ? -1 : 1));
+      const list = [...projects.values()].sort((a, b) => b.activeMs - a.activeMs || (a.label < b.label ? -1 : 1));
       const all = list.flatMap((p) => p.sessions);
       return {
         startMs,
-        activeMs: together(all),
+        activeMs: activeTogether(all),
         cost: list.reduce((n, p) => n + p.cost, 0),
         sessions: all.length,
         commits: all.reduce((n, e) => n + e.commits.length, 0),
@@ -250,7 +265,7 @@ export const prLabel = (p: JournalPr) => `PR${p.number ? ` #${p.number}` : ""}${
 export function journalMarkdown(day: JournalDay, only?: JournalProject): string {
   const lines = [`## ${new Date(day.startMs).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}`];
   for (const p of only ? [only] : day.projects) {
-    lines.push("", `**${p.project}** (${formatLeft(p.activeMs)})`);
+    lines.push("", `**${p.label}** (${formatLeft(p.activeMs)})`);
     for (const e of p.sessions) {
       lines.push(`- ${e.headline}`);
       for (const pr of e.prs) lines.push(`  - ${prLabel(pr)} (${pr.url})`);
