@@ -100,7 +100,8 @@ function transcript({ id, cwd, start, prompts, model, sidechain = false, agentId
   const subs = [];
   let t = start;
   let ctx = int(8_000, 20_000);
-  const base = { sessionId: id, cwd, ...(sidechain ? { isSidechain: true, agentId } : {}) };
+  // Claude Code writes the effort each reply ran at on its lines; a sub-agent runs at its own.
+  const base = { sessionId: id, cwd, effort: sidechain ? "medium" : "high", ...(sidechain ? { isSidechain: true, agentId } : {}) };
   const stamp = () => new Date(t).toISOString();
   for (const text of prompts) {
     lines.push({ ...base, type: "user", timestamp: stamp(), message: { role: "user", content: text } });

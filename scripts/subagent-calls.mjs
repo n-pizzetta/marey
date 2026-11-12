@@ -23,11 +23,11 @@ function samePrompt(entry, prompt) {
 /**
  * @param {Array<{ t: number, tool: string, preview: string, full?: string, agentId?: string }>} main
  *   main-thread calls in time order, `agentId` when the call's result named the sub-agent it ran
- * @param {Array<{ agentId?: string | null, prompt?: string | null, description?: string | null, firstT: number, label?: string | null, calls: object[] }>} subs
+ * @param {Array<{ agentId?: string | null, prompt?: string | null, description?: string | null, firstT: number, label?: string | null, model?: string | null, effort?: string | null, calls: object[] }>} subs
  *   one per sub-agent transcript: its id, its first message, the description it was given, its first
- *   event, a label, its calls
+ *   event, a label, the model and effort it ran at, its calls
  * @returns the main calls, each sub-agent's calls in `children` of the call that started it, with the
- *   sub-agent's id in `subagentId`. A sub-agent no call can be found for gets a row of its own,
+ *   sub-agent's id in `subagentId` and the model and effort it ran at in `agentRun`. A sub-agent no call can be found for gets a row of its own,
  *   `orphan: true`, which is not a call itself.
  */
 export function nestSubagentCalls(main, subs) {
@@ -66,6 +66,7 @@ export function nestSubagentCalls(main, subs) {
       (described && latestBefore(sub.firstT, (e) => norm(e.full ?? e.preview).includes(described))) ||
       latestBefore(sub.firstT, () => true);
     const id = sub.agentId ? { subagentId: sub.agentId } : {};
+    if (sub.model || sub.effort) id.agentRun = { model: sub.model ?? null, effort: sub.effort ?? null };
     if (parent) {
       taken.add(parent);
       parent.children = calls;

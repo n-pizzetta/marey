@@ -6,6 +6,8 @@ export interface CallDetail {
   /** Null while the call runs. `cut`: the result's length when it was longer than what came back. */
   output: { text: string; cut?: number } | null;
   isError: boolean;
+  /** The call as its transcript wrote it: Claude Code's tool_use block, Codex's payload, Copilot CLI's event. */
+  raw?: unknown;
 }
 
 /** Calls that are done don't change: fetched once per page load. */

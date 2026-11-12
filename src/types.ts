@@ -62,6 +62,8 @@ export interface ToolCall {
   children?: ToolCall[];
   /** The sub-agent's type and description, when Claude Code wrote them. */
   agentLabel?: string;
+  /** The model and effort the sub-agent ran at, read from its own transcript (the call often names neither). */
+  agentRun?: { model: string | null; effort: string | null };
   /** The id of the sub-agent this call started (its transcript's), as in `liveSubagents`. */
   subagentId?: string;
   /** A sub-agent whose starting call wasn't found: this row stands for it and is not a call itself. */

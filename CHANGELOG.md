@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Session detail, Tools: "Raw JSON" in an open call shows the call exactly as the transcript wrote it, every field included. A call that started a sub-agent says the model and effort the sub-agent ran at (`sonnet-5.5 · high effort`), read from the sub-agent's own transcript: the call often names only `sonnet`, and no effort.
+
 ### Fixed
 
 - Session detail: the popovers of the header (quality, the verdict, the info dots) went under the tabs bar where they crossed it. They open over it again.

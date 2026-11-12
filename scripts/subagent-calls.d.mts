@@ -8,6 +8,7 @@ export type NestableCall = {
   agentId?: string;
   orphan?: boolean;
   agentLabel?: string;
+  agentRun?: { model: string | null; effort: string | null };
   children?: NestableCall[];
 };
 
@@ -16,6 +17,8 @@ export type SubagentRun = {
   prompt?: string | null;
   firstT: number;
   label?: string | null;
+  model?: string | null;
+  effort?: string | null;
   calls: NestableCall[];
 };
 

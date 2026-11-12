@@ -66,6 +66,8 @@ test("an opened session's calls come back whole, sub-agent calls included", asyn
       assert.ok(c.id, `${s.id}: a call without id`);
       const whole = await parser.sessionCall(s, c.id);
       assert.equal(typeof whole.input, "object");
+      assert.equal(typeof whole.raw, "object", `${s.id}: ${c.id} comes with the call as its transcript wrote it`);
+      if (s.agent === "claude") assert.equal(whole.raw.id, c.id);
       if (c.result) {
         assert.equal(whole.output.text.length, c.result.bytes ?? whole.output.text.length);
         assert.ok(whole.output.text.startsWith(c.result.text.slice(0, 50)), `${s.id}: result of ${c.id}`);
@@ -76,6 +78,16 @@ test("an opened session's calls come back whole, sub-agent calls included", asyn
   }
   assert.ok(checked > 0);
   assert.equal(await parser.sessionCall(sessions[0], "no-such-call"), null);
+});
+
+test("a call that started a sub-agent says the model and effort the sub-agent ran at", async () => {
+  const { sessions } = await parser.parseAllSessions({ light: true });
+  const runs = [];
+  for (const s of sessions.filter((x) => x.agent === "claude")) {
+    for (const c of (await parser.sessionDetail(s)).toolSequence) if (c.children?.length && !c.orphan) runs.push(c.agentRun);
+  }
+  assert.ok(runs.length > 0);
+  for (const r of runs) assert.deepEqual(r, { model: "haiku-4.5", effort: "medium" });
 });
 
 test("light sessions keep no calls, timeline, file paths or prompt texts", async () => {
