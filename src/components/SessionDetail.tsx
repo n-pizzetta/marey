@@ -6,6 +6,7 @@ import { FrictionsCard, SessionKpis, TabPreviews, type OverviewLink } from "./Se
 import { KpiRow } from "./Kpi";
 import { freshTokens, useUnit, type Unit } from "../utils/units";
 import { promptWeights } from "../utils/promptShare";
+import { useZoomGestures, useZoomView } from "../utils/chartZoom";
 import { cacheHit, inputTokens, projectColor } from "../utils/fleetStats";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createPatch } from "diff";
@@ -667,6 +668,13 @@ function OverviewTab({
   const durationMin = effDurationMs / 60_000;
   // calls made while each prompt ran, sub-agent calls included
   const promptTools = callsPerPrompt(toolSeq, prompts);
+  // Zoom on a run of prompts (at least 3): the bars and their scale are the ones in view.
+  const chartRef = useRef<HTMLDivElement>(null);
+  const promptZoom = useZoomView([0, Math.max(1, stats.length)], Math.min(3, Math.max(1, stats.length)));
+  const { sel: dragSel, handlers: zoomHandlers } = useZoomGestures(chartRef, promptZoom, () => {
+    const r = chartRef.current?.getBoundingClientRect();
+    return r ? { left: r.left, width: r.width } : null;
+  });
 
   if (liveEmpty) {
     return (
@@ -692,6 +700,7 @@ function OverviewTab({
               Prompts <InfoDot title={`One bar per prompt: its ${unitLabel}, sub-agents included, and the tool calls it led to. The colour is its costliest kind (by API value). Click a bar for the prompt.`} />
             </span>
             <span className="dim tabular">
+              {promptZoom.zoomed && <button className="link-btn prompt-zoom-reset" onClick={promptZoom.reset}>Reset zoom</button>}
               {prompts.length} prompt{prompts.length === 1 ? "" : "s"}
               {totalVal > 0 && ` · ${fmt(totalVal)} ${unitLabel}`}
             </span>
@@ -699,19 +708,30 @@ function OverviewTab({
           {stats.length === 0 ? (
             <div className="placeholder">No usage captured for its prompts.</div>
           ) : (() => {
-            const maxVal = Math.max(1e-9, ...weights.map((w) => w.value));
+            const first = Math.max(0, Math.floor(promptZoom.view[0] + 1e-9));
+            const last = Math.min(stats.length, Math.ceil(promptZoom.view[1] - 1e-9));
+            const shown = stats.slice(first, last).map((s, k) => ({ s, i: first + k }));
+            const maxVal = Math.max(1e-9, ...shown.map(({ i }) => weights[i].value));
+            const mid = shown[Math.floor(shown.length / 2)];
             return (
               <>
                 <div className="prompt-chart-wrap">
                   <div className="prompt-chart-axis">
-                    <span className="mono dim tabular">{fmt(maxVal)}</span>
+                    <span className="mono dim tabular">{fmt(maxVal > 1e-6 ? maxVal : 0)}</span>
                     <span className="mono dim tabular">0</span>
                   </div>
-                  <div className="prompt-chart">
-                    {stats.map((s, i) => {
+                  <div className="prompt-chart zoomable" ref={chartRef} {...zoomHandlers}>
+                    {dragSel && (
+                      <span
+                        className="zoom-selection-box"
+                        style={{ left: `${Math.min(dragSel.f0, dragSel.f1) * 100}%`, width: `${Math.abs(dragSel.f1 - dragSel.f0) * 100}%` }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {shown.map(({ s, i }) => {
                       const heightPct = (weights[i].value / maxVal) * 100;
                       const isSelected = sel === i;
-                      const showGap = i > 0 && s.gapBeforeMs >= SESSION_IDLE_GAP_MS;
+                      const showGap = i > first && s.gapBeforeMs >= SESSION_IDLE_GAP_MS;
                       const tc = promptTools[i];
                       return (
                         <div key={i} className="prompt-bar-slot">
@@ -737,9 +757,9 @@ function OverviewTab({
                     })}
                   </div>
                   <div className="prompt-chart-x mono dim tabular">
-                    <span>{stats[0] ? formatClockAt(session.startedAt, stats[0].t, { seconds: false }) : ""}</span>
-                    <span>{stats[Math.floor(stats.length / 2)] ? formatClockAt(session.startedAt, stats[Math.floor(stats.length / 2)].t, { seconds: false }) : ""}</span>
-                    <span>{stats[stats.length - 1] ? formatClockAt(session.startedAt, stats[stats.length - 1].t, { seconds: false }) : ""}</span>
+                    <span>{shown[0] ? formatClockAt(session.startedAt, shown[0].s.t, { seconds: false }) : ""}</span>
+                    <span>{mid ? formatClockAt(session.startedAt, mid.s.t, { seconds: false }) : ""}</span>
+                    <span>{shown.length ? formatClockAt(session.startedAt, shown[shown.length - 1].s.t, { seconds: false }) : ""}</span>
                   </div>
                 </div>
                 <div className="prompt-legend mono dim" style={{ marginTop: 10 }}>
@@ -748,6 +768,7 @@ function OverviewTab({
                   <span className="prompt-legend-item"><span className="prompt-legend-swatch tokens-seg cache-read" /> cache read</span>
                   <span className="prompt-legend-item"><span className="prompt-legend-swatch tokens-seg cache-write" /> cache write</span>
                   <span className="prompt-legend-item"><span className="prompt-legend-swatch tokens-seg input" /> input</span>
+                  <span className="zoom-hint">{promptZoom.zoomed ? `#${first + 1}–#${last} of ${stats.length} · double-click to zoom out` : "drag to zoom · pinch to zoom in or out"}</span>
                 </div>
               </>
             );

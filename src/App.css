@@ -2456,3 +2456,13 @@ summary:focus-visible {
   margin-bottom: 0;
 }
 
+
+/* zoomable charts (utils/chartZoom.ts): drag to pick a stretch, pinch to zoom, swipe to pan */
+.zoomable { cursor: crosshair; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.zoomable button { cursor: pointer; }
+.prompt-chart.zoomable { position: relative; }
+.zoom-selection,
+.zoom-selection-box { fill: var(--c-cyan); fill-opacity: 0.16; stroke: var(--c-cyan); stroke-opacity: 0.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.zoom-selection-box { position: absolute; top: 0; bottom: 0; background: rgba(61, 150, 255, 0.16); border: 1px solid rgba(61, 150, 255, 0.5); border-radius: 4px; z-index: 1; }
+.zoom-hint { margin-left: auto; color: var(--c-text-ghost); }
+.prompt-zoom-reset { margin-right: 12px; }

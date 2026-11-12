@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Session } from "../../types";
 import type { Range } from "../../utils/range";
 import { keepFocus } from "../../utils/keepFocus";
@@ -15,6 +15,7 @@ import {
 } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
 import { modelLabel } from "../../../scripts/models.mjs";
+import { useZoomGestures, useZoomView } from "../../utils/chartZoom";
 
 interface Props {
   sessions: Session[];
@@ -26,7 +27,6 @@ interface Props {
 }
 
 type Axis = "tokens" | "cost";
-type Zoom = { fromMs: number; toMs: number; range: Range };
 
 const OTHER = "other";
 const DAY = 86_400_000;
@@ -39,14 +39,14 @@ const MIN_BUCKETS = 12;
 
 const pad2 = (n: number) => n.toString().padStart(2, "0");
 
-/** A bucket's start, as precise as its size and the span shown call for. */
-function formatBucketTime(ms: number, step: number, spanMs: number): string {
+/** A bucket's start, as precise as its size and the span shown call for (with the day once it crosses midnight). */
+function formatBucketTime(ms: number, step: number, spanMs: number, multiDay = spanMs > DAY): string {
   const d = new Date(ms);
   const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   if (step >= DAY) return date;
   const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   if (spanMs > 6 * DAY) return `${date} ${d.getHours()}h`;
-  if (spanMs > DAY) return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${step < 3_600_000 ? hm : `${d.getHours()}h`}`;
+  if (multiDay) return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${step < 3_600_000 ? hm : `${d.getHours()}h`}`;
   return hm;
 }
 
@@ -63,27 +63,33 @@ const PLOT_H = H - PAD_T - PAD_B;
 
 /**
  * Tokens or API value over the range, stacked by project or by model. Drag across the bars to zoom
- * on a stretch (finer bars, down to 5 minutes); double-click or "Reset zoom" to come back.
+ * on a stretch (finer bars, down to 5 minutes), pinch to zoom in or out, swipe sideways to move;
+ * double-click or "Reset zoom" to come back (utils/chartZoom.ts, like the session charts).
  */
 export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
   const [axis, setAxis] = useState<Axis>("tokens");
   const [hover, setHover] = useState<number | null>(null);
-  const [zoomState, setZoom] = useState<Zoom | null>(null);
-  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  // a zoom belongs to the range it was made in
-  const zoom = zoomState?.range === range ? zoomState : null;
   const labelOf = (key: string) => (key === OTHER ? OTHER : by === "model" ? modelLabel(key) : key);
   const colorOf = (key: string) => colors.get(key) ?? OTHER_COLOR;
 
-  const { buckets, series, step, spanMs, maxTotal } = useMemo(() => {
-    const bounds = zoom ?? rangeBoundsMs(sessions, range);
-    const step = zoom ? zoomStep(zoom.toMs - zoom.fromMs) : bucketSizeMs(range);
-    const all = bucketize(sessions, bounds.fromMs, bounds.toMs, step, by);
-    // Start where the usage starts, not at the range's start (midnight for Today), so the bars
-    // aren't all squeezed on the right; keep a few buckets so a short burst doesn't fill the width.
+  // The whole range, from where the usage starts, not the range's start (midnight for Today), so the
+  // bars aren't all squeezed on the right; a few buckets kept so a short burst doesn't fill the width.
+  const whole = useMemo(() => {
+    const bounds = rangeBoundsMs(sessions, range);
+    const all = bucketize(sessions, bounds.fromMs, bounds.toMs, bucketSizeMs(range), by);
     const firstUsed = all.findIndex((b) => b.bySeries.size > 0);
-    const raw = !zoom && firstUsed > 0 ? all.slice(Math.min(firstUsed, Math.max(0, all.length - MIN_BUCKETS))) : all;
+    return firstUsed > 0 ? all.slice(Math.min(firstUsed, Math.max(0, all.length - MIN_BUCKETS))) : all;
+  }, [sessions, range, by]);
+  const full: [number, number] = whole.length ? [whole[0].fromMs, whole[whole.length - 1].toMs] : [0, 1];
+  // a zoom belongs to the range it was made in; 30 minutes at the closest
+  const zoom = useZoomView(full, 30 * 60_000, range);
+  const zoomFrom = zoom.zoomed ? zoom.view[0] : null;
+  const zoomTo = zoom.zoomed ? zoom.view[1] : null;
+
+  const { buckets, series, step, spanMs, multiDay, maxTotal } = useMemo(() => {
+    const step = zoomFrom !== null && zoomTo !== null ? zoomStep(zoomTo - zoomFrom) : bucketSizeMs(range);
+    const raw = zoomFrom !== null && zoomTo !== null ? bucketize(sessions, zoomFrom, zoomTo, step, by) : whole;
 
     // Series with a color of their own, heaviest in view at the bottom; the rest fold into "other".
     const totals = new Map<string, number>();
@@ -108,8 +114,9 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
       if (total > maxTotal) maxTotal = total;
     }
     const spanMs = collapsed.length ? collapsed[collapsed.length - 1].toMs - collapsed[0].fromMs : 0;
-    return { buckets: collapsed, series, step, spanMs, maxTotal };
-  }, [sessions, range, axis, by, colors, zoom]);
+    const multiDay = collapsed.length > 0 && new Date(collapsed[0].fromMs).toDateString() !== new Date(collapsed[collapsed.length - 1].toMs - 1).toDateString();
+    return { buckets: collapsed, series, step, spanMs, multiDay, maxTotal };
+  }, [sessions, range, axis, by, colors, whole, zoomFrom, zoomTo]);
 
   const barW = buckets.length ? PLOT_W / buckets.length : PLOT_W;
   const indexAt = (clientX: number): number => {
@@ -118,24 +125,12 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
     const x = ((clientX - r.left) / r.width) * W;
     return Math.min(buckets.length - 1, Math.max(0, Math.floor((x - PAD_L) / barW)));
   };
-  const onPointerDown = (e: PointerEvent<SVGSVGElement>) => {
-    if (e.button !== 0 || buckets.length < 2) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const i = indexAt(e.clientX);
-    setDrag({ a: i, b: i });
-  };
-  const onPointerMove = (e: PointerEvent<SVGSVGElement>) => {
-    const i = indexAt(e.clientX);
-    if (drag) setDrag({ ...drag, b: i });
-    else setHover(i);
-  };
-  const onPointerUp = () => {
-    if (!drag) return;
-    const lo = Math.min(drag.a, drag.b);
-    const hi = Math.max(drag.a, drag.b);
-    setDrag(null);
-    if (hi > lo) setZoom({ fromMs: buckets[lo].fromMs, toMs: buckets[hi].toMs, range });
-  };
+  const { sel, handlers } = useZoomGestures(svgRef, zoom, () => {
+    const r = svgRef.current?.getBoundingClientRect();
+    if (!r || r.width === 0) return null;
+    const sx = r.width / W;
+    return { left: r.left + PAD_L * sx, width: PLOT_W * sx };
+  });
 
   const byToggle = (
     <span className="timeseries-toggle" role="group" aria-label="Stack by">
@@ -149,28 +144,28 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
       <div className="fleet-block">
         <div className="section-title">
           <span>Tokens over time</span>
-          {zoom ? <button className="link-btn" onClick={() => setZoom(null)}>Reset zoom</button> : byToggle}
+          {zoom.zoomed ? <button className="link-btn" onClick={zoom.reset}>Reset zoom</button> : byToggle}
         </div>
-        <div className="placeholder mono dim">No turn-level data in {zoom ? "this stretch" : "range"}.</div>
+        <div className="placeholder mono dim">No turn-level data in {zoom.zoomed ? "this stretch" : "range"}.</div>
       </div>
     );
   }
 
-  const sel = drag && drag.a !== drag.b ? { lo: Math.min(drag.a, drag.b), hi: Math.max(drag.a, drag.b) } : null;
+  const selBox = sel ? { x: PAD_L + Math.min(sel.f0, sel.f1) * PLOT_W, x1: PAD_L + Math.max(sel.f0, sel.f1) * PLOT_W } : null;
 
   return (
     <div className="fleet-block">
       <div className="section-title">
         <span>
           Tokens over time
-          {zoom && (
+          {zoom.zoomed && (
             <span className="dim mono timeseries-zoom">
-              {" · "}{formatBucketTime(buckets[0].fromMs, step, spanMs)} → {formatBucketTime(buckets[buckets.length - 1].toMs, step, spanMs)}
+              {" · "}{formatBucketTime(buckets[0].fromMs, step, spanMs, multiDay)} → {formatBucketTime(buckets[buckets.length - 1].toMs, step, spanMs, multiDay)}
             </span>
           )}
         </span>
         <span className="timeseries-controls">
-          {zoom && <button className="link-btn" onClick={() => setZoom(null)}>Reset zoom</button>}
+          {zoom.zoomed && <button className="link-btn" onClick={zoom.reset}>Reset zoom</button>}
           {byToggle}
           <span className="timeseries-toggle" role="group" aria-label="Measure">
             <button className={axis === "tokens" ? "active" : ""} onMouseDown={keepFocus} onClick={() => setAxis("tokens")}>tokens</button>
@@ -184,12 +179,9 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
           viewBox={`0 0 ${W} ${H}`}
           className="timeseries-svg zoomable"
           preserveAspectRatio="none"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={() => setDrag(null)}
-          onPointerLeave={() => !drag && setHover(null)}
-          onDoubleClick={() => setZoom(null)}
+          {...handlers}
+          onMouseMove={(e) => setHover(indexAt(e.clientX))}
+          onMouseLeave={() => setHover(null)}
         >
           <text x={8} y={PAD_T + 10} className="timeseries-axis">
             {axis === "tokens" ? formatTokens(maxTotal) : formatCost(maxTotal)}
@@ -216,16 +208,14 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
                       width={Math.max(1, barW - 1)}
                       height={h}
                       fill={colorOf(key)}
-                      opacity={drag || hover === null || hover === i ? 0.9 : 0.35}
+                      opacity={sel || hover === null || hover === i ? 0.9 : 0.35}
                     />
                   );
                 })}
               </g>
             );
           })}
-          {sel && (
-            <rect className="timeseries-selection" x={PAD_L + sel.lo * barW} y={PAD_T} width={(sel.hi - sel.lo + 1) * barW} height={PLOT_H} />
-          )}
+          {selBox && <rect className="timeseries-selection" x={selBox.x} y={PAD_T} width={Math.max(0, selBox.x1 - selBox.x)} height={PLOT_H} />}
           {/* X axis ticks (first, middle, last) */}
           {/* the outer labels align on the plot's edges, so the last one isn't cut */}
           {[0, Math.floor(buckets.length / 2), buckets.length - 1].map((i, k) => (
@@ -236,7 +226,7 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
               textAnchor={k === 0 ? "start" : k === 2 ? "end" : "middle"}
               className="timeseries-axis"
             >
-              {buckets[i] ? formatBucketTime(k === 2 ? buckets[i].toMs : buckets[i].fromMs, step, spanMs) : ""}
+              {buckets[i] ? formatBucketTime(k === 2 ? buckets[i].toMs : buckets[i].fromMs, step, spanMs, multiDay) : ""}
             </text>
           ))}
         </svg>
@@ -247,16 +237,16 @@ export function TokenTimeSeries({ sessions, range, by, onBy, colors }: Props) {
               {labelOf(key)}
             </span>
           ))}
-          <span className="timeseries-hint">{zoom ? "double-click to zoom out" : "drag to zoom"}</span>
+          <span className="timeseries-hint">{zoom.zoomed ? "double-click to zoom out" : "drag to zoom · pinch to zoom in or out"}</span>
         </div>
-        {hover !== null && !drag && buckets[hover] && (
+        {hover !== null && !sel && buckets[hover] && (
           <TimeSeriesTooltip
             bucket={buckets[hover]}
             axis={axis}
             series={series}
             colorOf={colorOf}
             labelOf={labelOf}
-            when={(ms) => formatBucketTime(ms, step, spanMs)}
+            when={(ms) => formatBucketTime(ms, step, spanMs, multiDay)}
           />
         )}
       </div>

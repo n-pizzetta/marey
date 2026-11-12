@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Session detail: the Prompts chart (Overview) and the flight data (Timeline) zoom. Drag across a chart to zoom on a stretch, pinch (or ctrl / ⌘ + wheel) to zoom in or out, swipe sideways to move; double-click or Reset zoom to come back. The scale follows what is in view, so one heavy prompt or turn no longer flattens the rest. Usage's tokens chart takes the same gestures.
+
 ### Fixed
 
 - Claude Code sessions: recent Claude Code versions also write a copy of each request sent to the API in the transcript (`api-request-blob`, no timestamp). Marey read it as more prompts and replies, and since a prompt with no time seemed to come before everything, it could get every turn of the session: one huge bar on the Prompts chart, the others at zero. These copies are skipped now, and a prompt with no time takes no turn.
