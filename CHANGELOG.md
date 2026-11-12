@@ -6,18 +6,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Journal: time by client. On top of the page, the active time of this week, last week, this month or last month, by the folder sessions ran under: with projects in `~/work/<client>/<project>`, one line per client, which opens on its projects; what is outside goes under Other. The folder is found from where your sessions run; without such a layout, the lines are projects. "Export CSV" gives a line per day and client (date, hours in decimal, the projects behind them) to start a timesheet from. A client's time is the time with at least one of its sessions at work, so two clients worked side by side each count it.
-
-### Changed
-
-- Now: the plan bars no longer hatch the stretch the pace would still fill: the part not used yet stays empty. The forecast stays as the line under the bar.
-
-### Fixed
-
-- Journal: two projects of the same name in different folders (a `brain` under two clients) were shown as one, and copied together. They are two, named with their parent folder: `ADEO/brain`.
-
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).
@@ -30,6 +18,20 @@ versioning follows [SemVer](https://semver.org/).
   macOS/Linux).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
+
+## [0.15.0] — 2026-11-12
+
+### Added
+
+- Journal: time by client. On top of the page, the active time of this week, last week, this month or last month, by the folder sessions ran under: with projects in `~/work/<client>/<project>`, one line per client, which opens on its projects; what is outside goes under Other. The folder is found from where your sessions run; without such a layout, the lines are projects. "Export CSV" gives a line per day and client (date, hours in decimal, the projects behind them) to start a timesheet from. A client's time is the time with at least one of its sessions at work, so two clients worked side by side each count it.
+
+### Changed
+
+- Now: the plan bars no longer hatch the stretch the pace would still fill: the part not used yet stays empty. The forecast stays as the line under the bar.
+
+### Fixed
+
+- Journal: two projects of the same name in different folders (a `brain` under two clients) were shown as one, and copied together. They are two, named with their parent folder: `ADEO/brain`.
 
 ## [0.14.0] — 2026-11-10
 
