@@ -9,6 +9,9 @@ import { ModelMix } from "../components/fleet/ModelMix";
 import { ToolsHeatmap } from "../components/fleet/ToolsHeatmap";
 import { HeavyPrompts } from "../components/fleet/HeavyPrompts";
 import { FiveHourSession } from "../components/fleet/FiveHourSession";
+import { HealthCheck } from "../components/fleet/HealthCheck";
+import { Recommendations } from "../components/Recommendations";
+import type { RecommendationsPayload } from "../utils/recommendations";
 import { PageSection } from "./PageSection";
 
 interface Props {
@@ -24,11 +27,16 @@ interface Props {
   scopeBar: ReactNode;
   /** The scope's headline figures. */
   stats: ReactNode;
+  /** Null in Codex and Copilot views and without the API. */
+  recommendations: RecommendationsPayload | null;
   onSelectSession: (id: string) => void;
 }
 
-/** What uses the current 5h windows, then where tokens and API value went over the range: over time, by project, model and tool. */
-export function UsagePage({ sessions, allSessions, everySession, windowProviders, limits, range, scopeBar, stats, onSelectSession }: Props) {
+/**
+ * What uses the current 5h windows, then where tokens and API value went over the range: over time,
+ * by project, model and tool; then what is worth fixing in how sessions run, one line each.
+ */
+export function UsagePage({ sessions, allSessions, everySession, windowProviders, limits, range, scopeBar, stats, recommendations, onSelectSession }: Props) {
   return (
     <div className="page">
       {windowProviders.length > 0 && (
@@ -54,6 +62,13 @@ export function UsagePage({ sessions, allSessions, everySession, windowProviders
           <ToolsHeatmap sessions={sessions} />
         </div>
         <HeavyPrompts sessions={sessions} range={range} onSelectSession={onSelectSession} />
+      </PageSection>
+      <PageSection
+        title="Worth fixing"
+        note={`${recommendations ? `Recurring problems over your last ${recommendations.windowDays} days, then the` : "The"} checks that miss in the range above. Open a line for the fix.`}
+      >
+        <Recommendations data={recommendations} onSelectSession={onSelectSession} />
+        <HealthCheck sessions={sessions} allSessions={allSessions} onSelectSession={onSelectSession} />
       </PageSection>
     </div>
   );

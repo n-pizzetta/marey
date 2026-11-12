@@ -67,17 +67,17 @@ Running sessions show up in real time with the current tool, context fill and pr
 <tr>
 <td width="40%" valign="middle">
 
-### Usage &amp; Health
+### Usage &amp; Journal
 
-**Usage**: what is using the current 5-hour window (by project, session and prompt), then the history over the range you pick: tokens over time, project league, model mix, tools and the heaviest prompts. **Health**: recommendations backed by your own sessions, health checks and anomaly flags.
+**Usage**: what is using the current 5-hour window (by project, session and prompt), then the history over the range you pick: tokens over time, project league, model mix, tools and the heaviest prompts. At the bottom, what is worth fixing, one line each: recurring problems backed by your own sessions, and the checks that miss, each opening onto its fix.
 
 **Journal**: what you and your agents did each day, by project. Every session with a readable title, the pull requests it opened and the commits it made, and a button that copies a day as Markdown for a standup or a note: one project alone, or the whole day. On top, the time of the week or the month by client, when your projects sit in one folder per client (`~/work/<client>/<project>`), with a CSV export to start a timesheet from. Claude Code, Codex and Copilot CLI sessions side by side.
 
-**Context**: for one project, what your agents have in mind when a session starts (the files read in full, the memory index and the memories behind it, green when re-read lately), session by session, with each sub-agent's brief and what it received, and what sessions left on disk that nobody committed.
+**Context**, a tab of each session: what the agent had in mind when it started (the files read in full, the memory index and the memories behind it), what it did to the memory, what it left on disk, each sub-agent's brief and what it received, then what the project's sessions left that nobody committed.
 
 </td>
 <td width="60%">
-  <img src="./docs/readme/fleet.gif" alt="The Usage page, from the current 5h window to 30 days of history, then the Health checks" width="100%" />
+  <img src="./docs/readme/fleet.gif" alt="The Usage page, from the current 5h window to 30 days of history" width="100%" />
 </td>
 </tr>
 <tr>
@@ -271,7 +271,7 @@ The dev server and `scripts/serve.mjs` mount the same API (`scripts/api.mjs`): i
    React 19 SPA (hash routing)
    ├─ Now: PlanCard per provider, SessionBoard
    ├─ Sessions: SessionList / SessionFilters / SessionCompare
-   ├─ Usage and Health (src/components/fleet/)
+   ├─ Usage (src/components/fleet/)
    └─ SessionDetail (Overview / Timeline / Tools / Tokens / Files)
 ```
 
@@ -286,7 +286,7 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the parser internals, component m
 - *Open terminal* is macOS only. It picks the exact tab in Ghostty 1.3+ only, and not inside tmux, zellij or screen.
 - Test coverage is thin: only the parser has tests (`pnpm test`).
 - Codex and Copilot CLI sessions have no context-quality score, ghost detection, file-history diffs or `/insights` outcome (Claude Code only), and are kept out of the Claude-specific health rules and recommendations.
-- Context page: Codex logs no instruction files (whether it read an AGENTS.md is not recorded) and encrypts its sub-agents' briefs; Copilot CLI's instruction files are matched to files on disk by content. Memory written by an interpreter script is missed, and sessions from older Claude Code versions don't log their instruction files.
+- Context tab: Codex logs no instruction files (whether it read an AGENTS.md is not recorded) and encrypts its sub-agents' briefs; Copilot CLI's instruction files are matched to files on disk by content. Memory written by an interpreter script is missed, and sessions from older Claude Code versions don't log their instruction files.
 - A session's share of a limit is an estimate: the providers report the % used per account, not per session. Marey splits it by each session's API value in the window (Claude Code: with cache reads at a tenth of their price, the closest fit to how its limits moved; Copilot CLI: AI credits). For Claude Code and Codex the whole % is split between the sessions on this machine, so use on claude.ai, the Codex web app or another machine counts toward them too: read those shares as an order of magnitude. Copilot CLI's are exact, since each session logs its own credits. Copilot CLI's limits are as fresh as the last request made with it on this machine. Codex's are asked live from `codex app-server` once a minute while the dashboard is open, so an early reset or use elsewhere shows up without a request; when that fails (an API key, offline), they are as fresh as the last request.
 
 ---

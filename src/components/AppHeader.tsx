@@ -59,13 +59,6 @@ const NAV_ICONS: Record<Page, ReactNode> = {
       <path d="M5 6.5v5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5M5 11.5v5.5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5.5" />
     </>
   ),
-  health: <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4" />,
-  context: (
-    <>
-      <path d="M12 4l8 4-8 4-8-4 8-4z" />
-      <path d="M4 12l8 4 8-4M4 16l8 4 8-4" />
-    </>
-  ),
   journal: (
     <>
       <path d="M6.5 4h10A1.5 1.5 0 0 1 18 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-10V4z" />

@@ -14,15 +14,6 @@ import "../recommendations.css";
 interface Props {
   data: RecommendationsPayload | null;
   onSelectSession: (id: string) => void;
-  /** Cards shown; the rest is one click away. */
-  limit?: number;
-  onSeeAll?: () => void;
-  /** Home page: render nothing rather than an empty state. */
-  hideWhenEmpty?: boolean;
-  /** Wraps the list (a page section) only when there is something to show. */
-  wrap?: (content: ReactNode) => ReactNode;
-  /** "list": one line per card, for the home page; each line opens `onSeeAll`. */
-  variant?: "cards" | "list";
 }
 
 const KIND_LABEL: Record<RecKind, string> = {
@@ -152,17 +143,19 @@ function Card({ card, onSelectSession, onDismiss }: { card: Recommendation; onSe
   );
 }
 
-/** Recommendations from scripts/recommendations.mjs, each with its evidence, its fix and the sessions behind it. */
-export function Recommendations({ data, onSelectSession, limit, onSeeAll, hideWhenEmpty, wrap = (c) => c, variant = "cards" }: Props) {
+/**
+ * Recommendations from scripts/recommendations.mjs, one line each: its kind, what happens and how
+ * often. A line opens onto its card: the evidence, the fix and the sessions behind it.
+ */
+export function Recommendations({ data, onSelectSession }: Props) {
   const [dismissed, setDismissed] = useState<Dismissed>(readDismissed);
   const [showHidden, setShowHidden] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
   if (!data) return null;
 
   const visible = data.cards.filter((c) => !isDismissed(c, dismissed));
   const hidden = data.cards.filter((c) => isDismissed(c, dismissed));
   const cov = data.coverage;
-  const warning = cov?.warning ? <p className="rec-warning">{cov.warning}</p> : null;
-  if (visible.length === 0 && hideWhenEmpty) return warning;
 
   const dismiss = (card: Recommendation, reason: "done" | "irrelevant") => {
     const next = { ...dismissed, [card.id]: { count: card.count, at: new Date().toISOString(), reason } };
@@ -175,50 +168,36 @@ export function Recommendations({ data, onSelectSession, limit, onSeeAll, hideWh
     writeDismissed(next);
     setDismissed(next);
   };
-  const shown = limit ? visible.slice(0, limit) : visible;
 
-  if (variant === "list") {
-    return wrap(
-      <div className="recs">
-        {warning}
-        <ul className="rec-list">
-          {shown.map((c) => {
-            const evidence = evidenceText(c);
-            return (
-              <li key={c.id} className={`rec-${c.kind} ${evidence.fading ? "fading" : ""}`}>
-                <button onClick={onSeeAll}>
-                  <span className="rec-kind">{KIND_LABEL[c.kind]}</span>
-                  <span className="rec-list-title">{inline(c.title)}</span>
-                  <span className="rec-evidence tabular">{evidence.text}</span>
-                  <span className="rec-list-go" aria-hidden="true">→</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {limit && visible.length > limit && onSeeAll && (
-          <button className="link-btn rec-see-all" onClick={onSeeAll}>{visible.length - limit} more →</button>
-        )}
-      </div>,
-    );
-  }
-
-  return wrap(
+  return (
     <div className="recs">
-      {warning}
+      {cov?.warning && <p className="rec-warning">{cov.warning}</p>}
       {visible.length === 0 && cov && (
         <p className="rec-empty dim">
           Nothing to fix. Read {num(cov.toolCalls)} tool calls in {cov.sessions} sessions over {cov.windowDays} days:
           {" "}{num(cov.failed)} failed, {num(cov.denied)} denied, none recurring enough to point at the setup.
         </p>
       )}
-      {shown.map((c) => (
-        <Card key={c.id} card={c} onSelectSession={onSelectSession} onDismiss={(r) => dismiss(c, r)} />
-      ))}
-      {limit && visible.length > limit && onSeeAll && (
-        <button className="link-btn rec-see-all" onClick={onSeeAll}>{visible.length - limit} more recommendations →</button>
+      {visible.length > 0 && (
+        <ul className="rec-list">
+          {visible.map((c) => {
+            const evidence = evidenceText(c);
+            const open = openId === c.id;
+            return (
+              <li key={c.id} className={`rec-${c.kind} ${evidence.fading ? "fading" : ""} ${open ? "open" : ""}`}>
+                <button onClick={() => setOpenId(open ? null : c.id)} aria-expanded={open}>
+                  <span className="rec-kind">{KIND_LABEL[c.kind]}</span>
+                  <span className="rec-list-title">{inline(c.title)}</span>
+                  <span className="rec-evidence tabular">{evidence.text}</span>
+                  <span className="rec-list-go" aria-hidden="true">{open ? "▾" : "▸"}</span>
+                </button>
+                {open && <Card card={c} onSelectSession={onSelectSession} onDismiss={(r) => { dismiss(c, r); setOpenId(null); }} />}
+              </li>
+            );
+          })}
+        </ul>
       )}
-      {!limit && hidden.length > 0 && (
+      {hidden.length > 0 && (
         <div className="rec-hidden">
           <button className="link-btn" onClick={() => setShowHidden(!showHidden)}>
             {showHidden ? "Hide dismissed" : `${hidden.length} dismissed`}

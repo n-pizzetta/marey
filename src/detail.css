@@ -111,7 +111,7 @@
 /* every tab sits on the backdrop; its panels are opaque cards */
 .detail-body { background: transparent; gap: 18px; padding: 6px var(--detail-pad, 24px) 28px; }
 .d-panel,
-.detail-body > div:not(.overview-grid):not(.kpi-row):not(.live-empty):not(.clean-row):not(.placeholder) {
+.detail-body > div:not(.overview-grid):not(.kpi-row):not(.live-empty):not(.clean-row):not(.placeholder):not(.ctx-tab) {
   background: var(--c-bg-panel);
   border: none;
   border-radius: var(--radius-lg);

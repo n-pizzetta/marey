@@ -720,9 +720,6 @@
 .page .health-session:hover,
 .page .health-session:focus-visible { color: var(--c-text); background: var(--c-bg-hover); }
 
-.page .anomaly-row { background: var(--c-bg-elevated); border: none; border-radius: var(--radius); box-shadow: inset 3px 0 0 var(--c-amber); }
-.page .anomaly-row.kind-lowcache { box-shadow: inset 3px 0 0 var(--c-violet); }
-.page .anomaly-row.kind-stuck { box-shadow: inset 3px 0 0 var(--c-red); }
 
 /* ---- Session view: Tools tab, one line per call ---- */
 .tool-seq-main {

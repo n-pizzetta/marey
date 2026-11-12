@@ -12,8 +12,6 @@ import { SpikeAnalysisOverlay } from "./components/fleet/SpikeAnalysisOverlay";
 import { NowPage } from "./pages/NowPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { UsagePage } from "./pages/UsagePage";
-import { HealthPage } from "./pages/HealthPage";
-import { ContextPage } from "./pages/ContextPage";
 import { JournalPage } from "./pages/JournalPage";
 import { loadSessions, loadSessionDetail, type DataSource } from "./data/loadSessions";
 import type { Agent, Session } from "./types";
@@ -54,8 +52,6 @@ interface PersistedState {
   filter: FilterId;
   provider: Provider;
   project: string | null;
-  /** The project shown on Context: its own choice, independent of the project filter. */
-  contextProject: string | null;
   search: string;
 }
 
@@ -68,6 +64,8 @@ function parseHash(): Partial<PersistedState> {
   const m = path.match(/^session\/([a-f0-9-]{36})$/i);
   if (m) out.id = m[1];
   else if ((PAGE_IDS as string[]).includes(path)) out.page = path as Page;
+  // Pages folded since: what Health held is at the bottom of Usage; Context is a tab of each session.
+  else if (path === "health") out.page = "usage";
   else if (path === "") out.page = "now";
   if (query) {
     const params = new URLSearchParams(query);
@@ -83,8 +81,7 @@ function parseHash(): Partial<PersistedState> {
     const provider = params.get("provider");
     if (isProvider(provider)) out.provider = provider;
     const p = params.get("project");
-    if (p && out.page === "context") out.contextProject = p;
-    else if (p) out.project = p;
+    if (p && path !== "context") out.project = p;
     const q = params.get("q");
     if (q) out.search = q;
   }
@@ -112,8 +109,7 @@ function writeHash(state: PersistedState) {
   if (state.range !== "7d") params.set("range", state.range);
   if (state.filter !== "all") params.set("filter", state.filter);
   if (state.provider !== "all") params.set("provider", state.provider);
-  const project = state.page === "context" && !state.id ? state.contextProject : state.project;
-  if (project) params.set("project", project);
+  if (state.project) params.set("project", state.project);
   if (state.search) params.set("q", state.search);
   const qs = params.toString();
   const path = state.id ? `session/${state.id}` : state.page !== "now" ? state.page : "";
@@ -137,7 +133,6 @@ function App() {
   const [filter, setFilter] = useState<FilterId>(initial.filter ?? "all");
   const [preferredProvider, setPreferredProvider] = useState<Provider>(isProvider(initial.provider) ? initial.provider : "all");
   const [projectFilter, setProjectFilter] = useState<string | null>(initial.project ?? null);
-  const [contextProject, setContextProject] = useState<string | null>(initial.contextProject ?? null);
   const [range, setRange] = useState<Range>(initial.range ?? "7d");
   const [search, setSearch] = useState(initial.search ?? "");
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
@@ -169,10 +164,10 @@ function App() {
 
   useEffect(() => {
     // The choice, not the resolved provider: a Claude-only history must not pin "claude" once Codex shows up.
-    const state: PersistedState = { page, id: selectedId, range, filter, provider: preferredProvider, project: projectFilter, contextProject, search };
+    const state: PersistedState = { page, id: selectedId, range, filter, provider: preferredProvider, project: projectFilter, search };
     writeHash(state);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
-  }, [page, selectedId, range, filter, preferredProvider, projectFilter, contextProject, search]);
+  }, [page, selectedId, range, filter, preferredProvider, projectFilter, search]);
 
   /** Leaving the ghost filter with a bigger selection than a comparison can hold trims it. */
   const changeFilter = (f: FilterId) => {
@@ -376,8 +371,8 @@ function App() {
     );
   }
 
-  // On Sessions the whole page is in the scope: its bar sits on top. Usage and Health open with
-  // sections that ignore it, so their bar heads the sections it drives.
+  // On Sessions the whole page is in the scope: its bar sits on top. Usage opens with a section
+  // that ignores it, so its bar heads the sections it drives.
   const scopeBar = SCOPED_PAGES.has(page) ? (
     <ScopeBar
       range={range}
@@ -512,14 +507,9 @@ function App() {
             range={range}
             scopeBar={scopeBar}
             stats={<StatsRow sessions={scopedFiltered} totalInRange={inRange.length} range={range} activeFilterCount={activeFilterCount} />}
+            recommendations={recommendations}
             onSelectSession={setSelectedId}
           />
-        )}
-        {page === "health" && (
-          <HealthPage sessions={scopedFiltered} allSessions={providerSessions} recommendations={recommendations} scopeBar={scopeBar} onSelectSession={setSelectedId} />
-        )}
-        {page === "context" && (
-          <ContextPage allSessions={allSessions} provider={provider} project={contextProject} onProjectChange={setContextProject} generatedAt={generatedAt} />
         )}
         {page === "journal" && <JournalPage sessions={providerSessions} onSelectSession={setSelectedId} />}
       </main>
