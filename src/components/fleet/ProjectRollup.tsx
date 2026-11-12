@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { Session } from "../../types";
 import type { Range } from "../../utils/range";
-import { projectColor } from "../../utils/fleetStats";
+import { OTHER_COLOR, projectColor } from "../../utils/fleetStats";
 import { projectLeague, type ProjectRow } from "../../utils/projectLeague";
 import "../../league.css";
 import { formatCost, formatTokens } from "../../utils/format";
@@ -12,6 +12,8 @@ interface Props {
   allSessions: Session[];
   range: Range;
   limit?: number;
+  /** The chart's colors when it is stacked by project; null: neutral bars, so no color means two things on the page. */
+  colors?: Map<string, string> | null;
 }
 
 function Movement({ row }: { row: ProjectRow }) {
@@ -25,7 +27,7 @@ function Movement({ row }: { row: ProjectRow }) {
   );
 }
 
-export function ProjectRollup({ sessions, allSessions, range, limit = 6 }: Props) {
+export function ProjectRollup({ sessions, allSessions, range, limit = 6, colors }: Props) {
   const unit = useUnit();
   const rows = useMemo(() => projectLeague(sessions, allSessions, range).slice(0, limit), [sessions, allSessions, range, limit]);
 
@@ -48,7 +50,7 @@ export function ProjectRollup({ sessions, allSessions, range, limit = 6 }: Props
       </div>
       <div className="league">
         {rows.map((r, i) => {
-          const color = projectColor(r.project);
+          const color = colors === null ? "var(--c-text-ghost)" : colors ? colors.get(r.project) ?? OTHER_COLOR : projectColor(r.project);
           return (
             <div key={r.project} className={`league-row ${i === 0 ? "leader" : ""}`}>
               <span className="league-rank mono tabular">{i === 0 ? "👑" : i + 1}</span>

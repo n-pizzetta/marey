@@ -1,5 +1,5 @@
 import type { WindowBreakdown } from "../../utils/windowBreakdown";
-import { OTHER_COLOR, PROJECT_PALETTE, projectColor } from "../../utils/fleetStats";
+import { OTHER_COLOR, distinctColors, projectColor } from "../../utils/fleetStats";
 import { formatCost, formatTokens } from "../../utils/format";
 import { useStickyRank } from "../../utils/stickyRank";
 
@@ -20,19 +20,6 @@ const pctText = (part: number) => {
   const p = part * 100;
   return `${p < 10 ? p.toFixed(1) : p.toFixed(0)}%`;
 };
-
-/** Each project's session-list color, unless an earlier one in the card took it: then the next free one. */
-function distinctColors(projects: string[]): Map<string, string> {
-  const used = new Set<string>();
-  return new Map(
-    projects.map((p) => {
-      let color = projectColor(p);
-      if (used.has(color)) color = PROJECT_PALETTE.find((c) => !used.has(c)) ?? OTHER_COLOR;
-      used.add(color);
-      return [p, color];
-    }),
-  );
-}
 
 type Row = { id: string; name: string; project: string; part: number; value: string; title: string; onClick: () => void };
 
@@ -57,7 +44,8 @@ export function WindowConsumers({ data, scope, limitPct, onSelectSession }: Prop
   const segments = rest.length > 0
     ? [...named, { project: `other (${rest.length})`, tokens: rest.reduce((a, p) => a + p.tokens, 0), cost: rest.reduce((a, p) => a + p.cost, 0) }]
     : named;
-  const colors = distinctColors(named.map((p) => p.project));
+  // Each project's session-list color, unless an earlier one in the card took it: then the next free one.
+  const colors = distinctColors(named.map((p) => p.project), projectColor);
   const colorOf = (project: string) => colors.get(project) ?? OTHER_COLOR;
   const fill = Math.min(1, Math.max(0, limitPct ?? 1));
 

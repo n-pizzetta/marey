@@ -36,6 +36,14 @@
   --c-pink: #ff7eb6;
   --c-lime: #7ee787;
   --c-periwinkle: #8b9cff;
+  /* chart series, in this order (fleetStats SERIES_PALETTE): checked side by side for colorblind
+     (deutan, protan, tritan) and normal-vision separation on the dark surface */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #9085e9;
+  --series-5: #c98500;
+  --series-6: #d55181;
 
   --f-ui: var(--f-display);
   --f-display: "Inter Tight Variable", "Inter Tight", system-ui, -apple-system, sans-serif;

@@ -1,25 +1,17 @@
 import { useMemo } from "react";
 import type { Session } from "../../types";
-import { sumTokens } from "../../utils/fleetStats";
+import { OTHER_COLOR, modelColor, sumTokens } from "../../utils/fleetStats";
 import { estimateHint, formatCost, formatTokens } from "../../utils/format";
-import { isKnownModel, modelFamily, modelLabel } from "../../../scripts/models.mjs";
+import { isKnownModel, modelLabel } from "../../../scripts/models.mjs";
 
 interface Props {
   sessions: Session[];
+  /** The chart's colors when it is stacked by model; null: neutral bars, so no color means two things on the page. */
+  colors?: Map<string, string> | null;
 }
 
-const FAMILY_COLOR: Record<string, string> = {
-  fable: "var(--c-amber)",
-  mythos: "var(--c-amber)",
-  opus: "var(--c-violet)",
-  sonnet: "var(--c-cyan)",
-  haiku: "var(--c-teal)",
-  gpt: "var(--c-lime)",
-  codex: "var(--c-lime)",
-};
-const colorOf = (model: string) => FAMILY_COLOR[modelFamily(model)] ?? "var(--c-text-faint)";
-
-export function ModelMix({ sessions }: Props) {
+export function ModelMix({ sessions, colors }: Props) {
+  const colorOf = (model: string) => (colors === null ? "var(--c-text-ghost)" : colors ? colors.get(model) ?? OTHER_COLOR : modelColor(model));
   const rows = useMemo(() => {
     const byModel = new Map<string, { tokens: number; cost: number; count: number }>();
     for (const s of sessions) {

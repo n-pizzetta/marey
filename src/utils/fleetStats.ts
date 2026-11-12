@@ -1,6 +1,6 @@
 import type { Session } from "../types";
 import type { Range } from "./range";
-import { costOf } from "../../scripts/models.mjs";
+import { costOf, modelFamily } from "../../scripts/models.mjs";
 
 export type TokenBundle = { input: number; output: number; cacheRead: number; cacheWrite: number };
 
@@ -59,9 +59,11 @@ export function activeSessions(sessions: Session[], freshWindowMs = 5 * 60_000, 
   });
 }
 
-/** A project's tokens in a bucket, and their API value priced turn by turn with each turn's model. */
+/** A series' tokens in a bucket, and their API value priced turn by turn with each turn's model. */
 export type BucketCell = TokenBundle & { cost: number };
-export type TimeBucket = { fromMs: number; toMs: number; byProject: Map<string, BucketCell> };
+/** What the usage chart stacks: each project, or each model (a session that switched models splits). */
+export type SeriesBy = "project" | "model";
+export type TimeBucket = { fromMs: number; toMs: number; bySeries: Map<string, BucketCell> };
 
 export function bucketSizeMs(range: Range): number {
   switch (range) {
@@ -70,6 +72,16 @@ export function bucketSizeMs(range: Range): number {
     case "30d": return 6 * 60 * 60_000;   // 6 h
     case "all": return 24 * 60 * 60_000;  // 1 day
   }
+}
+
+/** Bucket sizes a zoomed chart picks from, all on clock boundaries. */
+const ZOOM_STEPS = [5, 15, 30, 60, 180, 360, 1440].map((m) => m * 60_000);
+/** At most this many bars in a zoomed chart. */
+const ZOOM_MAX_BARS = 96;
+
+/** The finest bucket size that keeps a span of `spanMs` to at most 96 bars. */
+export function zoomStep(spanMs: number): number {
+  return ZOOM_STEPS.find((step) => spanMs / step <= ZOOM_MAX_BARS) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
 }
 
 /** The local clock time a bucket of `step` starts at: the hour, a quarter, 00/06/12/18 h or midnight. */
@@ -90,16 +102,16 @@ function nextBucket(ms: number, step: number): number {
 }
 
 /**
- * Tokens per project in buckets on clock boundaries (a 7d bar is 14:00–15:00, not 14:37–15:37). The
- * first bucket starts before `fromMs` but only holds what came after it.
+ * Tokens per project or per model in buckets of `step` on clock boundaries (a 1 h bar is
+ * 14:00–15:00, not 14:37–15:37). The first bucket starts before `fromMs` but only holds what came
+ * after it.
  */
-export function bucketizeByProject(sessions: Session[], range: Range, fromMs: number, toMs: number): TimeBucket[] {
-  const step = bucketSizeMs(range);
+export function bucketize(sessions: Session[], fromMs: number, toMs: number, step: number, by: SeriesBy = "project"): TimeBucket[] {
   if (step <= 0 || toMs <= fromMs) return [];
   const buckets: TimeBucket[] = [];
   for (let b = bucketStart(fromMs, step); b < toMs; ) {
     const next = nextBucket(b, step);
-    buckets.push({ fromMs: b, toMs: next, byProject: new Map() });
+    buckets.push({ fromMs: b, toMs: next, bySeries: new Map() });
     b = next;
   }
   for (const s of sessions) {
@@ -116,31 +128,28 @@ export function bucketizeByProject(sessions: Session[], range: Range, fromMs: nu
         if (buckets[mid].fromMs <= ts) lo = mid;
         else hi = mid - 1;
       }
-      const idx = lo;
-      const proj = s.project || "unknown";
-      const cur = buckets[idx].byProject.get(proj) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+      const model = t.model ?? s.model;
+      const key = by === "model" ? model : s.project || "unknown";
+      const cur = buckets[lo].bySeries.get(key) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
       cur.input += t.tokens.input;
       cur.output += t.tokens.output;
       cur.cacheRead += t.tokens.cacheRead;
       cur.cacheWrite += t.tokens.cacheWrite;
-      cur.cost += costOfTokens(t.model ?? s.model, t.tokens);
-      buckets[idx].byProject.set(proj, cur);
+      cur.cost += costOfTokens(model, t.tokens);
+      buckets[lo].bySeries.set(key, cur);
     }
   }
   return buckets;
 }
 
-export function topProjectsByTokens(sessions: Session[], limit = 5): string[] {
-  const byProject = new Map<string, number>();
+/** Projects or models, heaviest in tokens first. */
+export function seriesByTokens(sessions: Session[], by: SeriesBy): string[] {
+  const total = new Map<string, number>();
   for (const s of sessions) {
-    const total = sumTokens(s.tokens);
-    const proj = s.project || "unknown";
-    byProject.set(proj, (byProject.get(proj) ?? 0) + total);
+    const usage = by === "model" ? s.modelUsage ?? { [s.model]: { tokens: sumTokens(s.tokens) } } : { [s.project || "unknown"]: { tokens: sumTokens(s.tokens) } };
+    for (const [key, u] of Object.entries(usage)) if (u.tokens > 0) total.set(key, (total.get(key) ?? 0) + u.tokens);
   }
-  return Array.from(byProject.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([p]) => p);
+  return [...total.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
 }
 
 export function rangeBoundsMs(sessions: Session[], range: Range, now: number = Date.now()): { fromMs: number; toMs: number } {
@@ -216,15 +225,40 @@ export function tokensIn5h(
   return tokensInWindow(sessions, fromMs, nowMs);
 }
 
-export const PROJECT_PALETTE = [
-  "var(--c-cyan)",
-  "var(--c-violet)",
-  "var(--c-lime)",
-  "var(--c-amber)",
-  "var(--c-pink)",
-  "var(--c-periwinkle)",
-];
+/**
+ * The colors of chart series (projects, models), in this order: six hues checked for colorblind and
+ * normal-vision separation side by side on the dark surface (`--series-*` in index.css). A seventh
+ * series folds into "other".
+ */
+export const SERIES_PALETTE = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
+export const PROJECT_PALETTE = SERIES_PALETTE;
 export const OTHER_COLOR = "var(--c-text-faint)";
+
+/**
+ * Each key, heaviest first, gets its own color (`preferred`), unless a heavier one took it: then the
+ * next free one. Keys past the palette are left out (they fold into "other"). So a color follows its
+ * project or model, and two series on screen never share one.
+ */
+export function distinctColors(keys: string[], preferred: (key: string) => string): Map<string, string> {
+  const used = new Set<string>();
+  const out = new Map<string, string>();
+  for (const key of keys) {
+    let color: string | undefined = preferred(key);
+    if (used.has(color)) color = SERIES_PALETTE.find((c) => !used.has(c));
+    if (!color) break;
+    used.add(color);
+    out.set(key, color);
+  }
+  return out;
+}
+
+/** A model family's own slot: the same model keeps its color across ranges and filters. */
+const FAMILY_SLOT: Record<string, number> = { sonnet: 0, fable: 1, mythos: 1, haiku: 2, opus: 3, gpt: 4, codex: 4 };
+
+export function modelColor(model: string): string {
+  const slot = FAMILY_SLOT[modelFamily(model)];
+  return SERIES_PALETTE[slot ?? 5];
+}
 
 let projectOrder = new Map<string, number>();
 

@@ -108,6 +108,12 @@ a:focus-visible,
   background: var(--c-bg-panel);
   color: var(--c-text);
 }
+/* drag across the bars to zoom on a stretch; the header holds the toggles and "Reset zoom" */
+.timeseries-controls { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.timeseries-svg.zoomable { cursor: crosshair; touch-action: pan-y; user-select: none; }
+.timeseries-selection { fill: var(--c-cyan); fill-opacity: 0.16; stroke: var(--c-cyan); stroke-opacity: 0.5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.timeseries-zoom { font-weight: 400; }
+.timeseries-hint { margin-left: auto; color: var(--c-text-ghost); }
 .timeseries-legend {
   display: flex;
   flex-wrap: wrap;
