@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Code sessions: recent Claude Code versions also write a copy of each request sent to the API in the transcript (`api-request-blob`, no timestamp). Marey read it as more prompts and replies, and since a prompt with no time seemed to come before everything, it could get every turn of the session: one huge bar on the Prompts chart, the others at zero. These copies are skipped now, and a prompt with no time takes no turn.
+
 ### Planned
 
 - Front-end: split `SessionDetail.tsx` (66 KB → 4 sub-components per tab).

@@ -545,6 +545,9 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
   function line(j) {
     // Valid JSON that is not a record (`null`, a number) is skipped like an unreadable line.
     if (!j || typeof j !== "object") return;
+    // A copy of a request sent to the API (recent Claude Code versions): no timestamp, and its messages
+    // are already lines of their own. Read again, they would add prompts, turns and calls.
+    if (j.type === "api-request-blob") return;
     if (!cwd && j.cwd) cwd = j.cwd;
     if (typeof j.version === "string") version = j.version;
     if (sidechain && !agentId && typeof j.agentId === "string") agentId = j.agentId;
@@ -855,8 +858,9 @@ function relativizeTurns(turns, prompts, startedAt, promptsCutAt = null) {
     // After the last prompt kept, a turn belongs to one that wasn't: to none, not to prompt #100.
     const cut = promptsCutAt !== null && (tu.tsMs ?? 0) >= promptsCutAt;
     for (let i = cut ? -1 : prompts.length - 1; i >= 0; i--) {
-      const pt = prompts[i].tsMs ?? 0;
-      if (pt <= (tu.tsMs ?? 0)) { promptIdx = i; break; }
+      // a prompt with no time can't say which turns followed it
+      const pt = prompts[i].tsMs;
+      if (pt != null && pt <= (tu.tsMs ?? 0)) { promptIdx = i; break; }
     }
     return {
       t,
