@@ -18,6 +18,9 @@
 }
 /* flat toolbar: ghost buttons, the limits inline, nothing boxed */
 .session-overlay-host .detail-top { background: transparent; border-bottom: none; }
+/* no stacking context of its own: a flex item with a z-index makes one, and the header's popovers
+   (quality, the verdict, the info dots) would then stay under the sticky tabs bar */
+.session-overlay-host .detail-top { z-index: auto; }
 .session-overlay-host .detail-toolbar { padding-block: 12px 4px; background: transparent; border-bottom: none; }
 /* vertical rhythm: meta line, title and subtitle 6px apart, then 18px to the cleared / ghost banner and to the tabs, 28px from the tabs to the content */
 .session-overlay-host .detail-header { gap: 6px; padding: 16px var(--detail-pad) 0; }
