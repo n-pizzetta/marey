@@ -21,6 +21,7 @@ import { toastError } from "../utils/toast";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { keepFocus } from "../utils/keepFocus";
 import { CallBody } from "./CallBody";
+import { SessionContextTab } from "./SessionContextTab";
 
 function gradeColor(grade: string): string {
   if (grade === "S" || grade === "A") return "var(--c-green)";
@@ -207,7 +208,7 @@ interface Props {
   focusSubagent?: string | null;
 }
 
-type Tab = "overview" | "timeline" | "tools" | "tokens" | "files";
+type Tab = "overview" | "timeline" | "tools" | "tokens" | "files" | "context";
 
 /** Line icons on a 24 grid, drawn like the page navigation's. */
 const TABS: Array<{ id: Tab; label: string; icon: ReactNode }> = [
@@ -240,6 +241,7 @@ const TABS: Array<{ id: Tab; label: string; icon: ReactNode }> = [
     ),
   },
   { id: "files", label: "Files", icon: <path d="M13.5 3.5h-6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-10zM13.5 3.5v5h5" /> },
+  { id: "context", label: "Context", icon: <path d="M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4" /> },
 ];
 
 export function SessionDetail({
@@ -467,6 +469,7 @@ export function SessionDetail({
         )}
         {tab === "tokens" && <TokensTab session={session} focus={tokensFocus} onFocusDone={clearTokensFocus} />}
         {tab === "files" && <FilesTab session={session} />}
+        {tab === "context" && <SessionContextTab session={session} />}
       </div>
 
       <div className="detail-footer">

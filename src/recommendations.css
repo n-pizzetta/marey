@@ -1,7 +1,7 @@
 /* Recommendations (components/Recommendations.tsx): one card per cause, evidence then fix */
 .recs { display: flex; flex-direction: column; gap: 12px; }
 
-/* home page: one line per recommendation, the cards live on Health */
+/* Usage, Worth fixing: one line per recommendation, opening onto its card */
 .rec-list {
   list-style: none;
   margin: 0;
@@ -13,7 +13,7 @@
 .rec-list li { --rec-tone: var(--c-text-dim); border-bottom: 1px solid var(--c-hairline); }
 .rec-list li:last-child { border-bottom: none; }
 .rec-list li.fading { opacity: 0.6; }
-.rec-list button {
+.rec-list li > button {
   display: grid;
   grid-template-columns: 110px 1fr auto 16px;
   align-items: baseline;
@@ -24,7 +24,10 @@
   border-radius: var(--radius-md);
   color: var(--c-text);
 }
-.rec-list button:hover { background: var(--c-bg-hover); }
+.rec-list li > button:hover { background: var(--c-bg-hover); }
+/* an open line's card sits inside the list, under its line */
+.rec-list .rec-card { margin: 0 4px 10px; box-shadow: none; }
+.rec-list .rec-card .rec-head { display: none; }
 .rec-list-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rec-list-go { color: var(--c-text-faint); }
 
@@ -174,7 +177,7 @@
 
 @media (max-width: 720px) {
   .rec-card { padding: 14px; }
-  .rec-list button { grid-template-columns: 1fr 16px; gap: 2px 8px; }
+  .rec-list li > button { grid-template-columns: 1fr 16px; gap: 2px 8px; }
   .rec-list .rec-kind { grid-column: 1; grid-row: 1; }
   .rec-list-title { grid-column: 1; grid-row: 2; white-space: normal; }
   .rec-list .rec-evidence { grid-column: 1; grid-row: 3; }

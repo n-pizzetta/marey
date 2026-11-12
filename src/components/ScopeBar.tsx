@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * The scope of the Sessions, Usage and Health pages: one bar, one place.
+ * The scope of the Sessions and Usage pages: one bar, one place.
  * Every figure under it follows it; the Now page, which has none, ignores it.
  */
 export function ScopeBar({

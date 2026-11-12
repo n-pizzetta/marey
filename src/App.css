@@ -211,47 +211,6 @@ a:focus-visible,
 .heavy-prompts-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text); }
 .heavy-prompts-head .right, .heavy-prompts-row .right { text-align: right; justify-self: end; }
 
-/* ---- Anomalies ---- */
-.anomalies {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 340px;
-  overflow-y: auto;
-}
-.anomaly-row {
-  display: grid;
-  grid-template-columns: 10px 80px 100px 1fr 2fr;
-  gap: 10px;
-  align-items: center;
-  padding: 7px 12px;
-  background: var(--c-bg-panel);
-  border: 1px solid var(--c-hairline);
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font-family: inherit;
-  font-size: var(--fs-md);
-}
-.anomaly-row:hover { background: var(--c-bg-elevated); }
-.anomaly-row.kind-heavy { border-left-color: var(--c-amber); }
-.anomaly-row.kind-lowcache { border-left-color: var(--c-violet); }
-.anomaly-row.kind-stuck { border-left-color: var(--c-red); }
-.anomaly-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--c-amber);
-}
-.anomaly-row.kind-lowcache .anomaly-dot { background: var(--c-violet); }
-.anomaly-row.kind-stuck .anomaly-dot { background: var(--c-red); }
-.anomaly-kind { font-size: var(--fs-xs); letter-spacing: 0.08em; color: var(--c-text-dim); }
-.anomaly-project { color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.anomaly-goal { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text-dim); }
-.anomaly-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* ---- Project rollup / Model mix shared ---- */
 .project-rollup, .model-mix {
   display: flex;

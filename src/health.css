@@ -1,62 +1,28 @@
-.health-rules {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.health-rule {
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 10px;
-  padding: 12px 0;
-  border-top: 1px solid var(--c-hairline);
-}
-.health-rule:first-child {
-  border-top: none;
-}
-
+/* the checks that miss, as lines in the same list style as the recommendations (recommendations.css) */
+.health-checks { display: flex; flex-direction: column; gap: 8px; }
+.health-kind { display: inline-flex; align-items: center; gap: 6px; }
 .health-mark {
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  display: grid;
+  display: inline-grid;
   place-items: center;
-  font-size: var(--fs-md);
+  font-size: var(--fs-xs);
   font-weight: 700;
   border: 1px solid currentColor;
 }
-.status-pass .health-mark { color: var(--c-green); }
-.status-warn .health-mark { color: var(--c-amber); }
-.status-fail .health-mark { color: var(--c-red); }
-.status-na .health-mark { color: var(--c-text-faint); }
-.status-na .health-name { color: var(--c-text-dim); }
-
-.health-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-}
-.health-name {
-  font-weight: 600;
-}
-.health-value {
-  font-size: var(--fs-base);
-}
+.status-warn .health-mark,
 .status-warn .health-value { color: var(--c-amber); }
+.status-fail .health-mark,
 .status-fail .health-value { color: var(--c-red); }
-.health-target {
-  font-size: var(--fs-md);
-}
-
+.health-open { padding: 0 12px 12px 134px; }
 .health-why,
 .health-hint {
   margin: 4px 0 0;
   font-size: var(--fs-md);
   line-height: 1.45;
 }
+.health-passing { margin: 0; font-size: var(--fs-md); }
 
 .health-sessions {
   display: flex;
@@ -64,7 +30,9 @@
   gap: 6px;
   margin-top: 8px;
 }
-.health-session {
+.rec-list .health-session {
+  display: inline-block;
+  width: auto;
   font-size: var(--fs-sm);
   padding: 3px 8px;
   border-radius: 999px;
@@ -77,12 +45,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.health-session:hover,
-.health-session:focus-visible {
+.rec-list .health-session:hover,
+.rec-list .health-session:focus-visible {
   color: inherit;
   border-color: var(--c-text-faint);
 }
-
-/* score in the checklist heading */
-.health-score { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 400; color: var(--c-text-dim); }
-.health-score svg { flex: none; }
+@media (max-width: 720px) {
+  .health-open { padding-left: 12px; }
+}

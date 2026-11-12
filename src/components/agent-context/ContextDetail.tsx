@@ -49,20 +49,14 @@ function Subagent({ a, memoryExisted }: { a: ContextSubagent; memoryExisted: boo
 interface SessionProps {
   data: AgentContextData;
   session: ContextSession;
-  index: number;
-  count: number;
   marks: Map<string, Set<MemoryMark>> | undefined;
   rows: MemoryRow[];
-  onStep: (dir: -1 | 1) => void;
   onFile: (file: string) => void;
 }
 
 /** One session: what it had in mind at start, what it did to the memory, what it left on disk, its sub-agents. */
-export function SessionView({ data, session: s, index, count, marks, rows, onStep, onFile }: SessionProps) {
+export function SessionView({ data, session: s, marks, rows, onFile }: SessionProps) {
   const start = Date.parse(s.startedAt);
-  const end = Date.parse(s.endedAt);
-  const sameDay = new Date(start).toDateString() === new Date(end).toDateString();
-  const mins = Math.max(1, Math.round((end - start) / 60_000));
   const files = s.loads.at(-1)?.files ?? [];
   const hasIndex = files.some((f) => f.type === "AutoMem" || /\/memory\/MEMORY\.md$/.test(f.path ?? ""));
   const known = rows.filter((m) => m.firstMs != null && m.firstMs < start && (m.exists || (m.events.find((e) => e.mark === "x")?.tsMs ?? 0) > start));
@@ -130,20 +124,6 @@ export function SessionView({ data, session: s, index, count, marks, rows, onSte
 
   return (
     <div className="ctx-card ctx-dt">
-      <div className="ctx-dt-head">
-        <div className="ctx-dt-nav">
-          <button onClick={() => onStep(-1)} disabled={index <= 0} aria-label="Previous session">‹</button>
-          <button onClick={() => onStep(1)} disabled={index >= count - 1} aria-label="Next session">›</button>
-        </div>
-        <div className="ctx-dt-title">
-          <div className="ctx-kicker"><span className={`provider-dot ${s.agent}`} /> {AGENT_LABEL[s.agent]}{s.live ? " · running" : ""}</div>
-          <h3>{sessionName(s)}</h3>
-          <div className="ctx-meta">
-            {sameDay ? `${fmtDay(start)}, ${fmtTime(start)} → ${fmtTime(end)}` : `${fmtDay(start)}, ${fmtTime(start)} → ${fmtDay(end)}, ${fmtTime(end)}`}
-            {" · "}{mins >= 120 ? `${Math.round(mins / 60)} h` : `${mins} min`} · {plural(s.prompts, "prompt")}
-          </div>
-        </div>
-      </div>
       <div className="ctx-cols3">
         <div className="ctx-blk"><h4>Had in mind at start</h4>{had}</div>
         <div className="ctx-blk"><h4>Memory</h4>{memory}</div>

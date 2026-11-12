@@ -87,7 +87,7 @@ export interface AgentContextData {
   };
 }
 
-/** The Context page of one project, refetched after each parse of the sessions. */
+/** The Context tab of a session: its project's context, refetched after each parse of the sessions. */
 export function useAgentContext(project: string | null, generatedAt: string | undefined) {
   const [state, setState] = useState<{ project: string | null; data: AgentContextData | null; error: string | null }>({ project: null, data: null, error: null });
   useEffect(() => {

@@ -22,6 +22,10 @@ versioning follows [SemVer](https://semver.org/).
 ### Changed
 
 - Session detail, Tools: a call opens on its whole input and its whole result, read from the transcript when you open it, where it used to show the first 240 characters of the result and, for most tools, only a file path or a pattern. An edit shows its old and new text; a call that started a sub-agent shows the prompt the sub-agent was given and the report it sent back. The tab lists up to 5000 calls per transcript instead of 300, and prompts keep up to 50k characters instead of 1500.
+- Four tabs instead of six: Now, Sessions, Usage, Journal. Health and Context are folded into the pages they serve:
+  - What Health held is at the bottom of Usage, under Worth fixing, one line each: the recommendations, then only the checks that miss in the range, worst first. A line opens onto its fix and the sessions behind it; the checks that pass are counted. The anomaly flags are gone: the heaviest sessions are under Heaviest prompts, stuck sessions on Now.
+  - Context is a tab of each session: what it had in mind at start, what it did to the memory, what it left on disk and what each sub-agent was given, then what its project's sessions left open. The project is the session's own, so it no longer changes when another session runs. The project-wide grid of sessions and memories is gone.
+  - Old `#health` links open Usage.
 
 ### Fixed
 
