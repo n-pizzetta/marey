@@ -520,6 +520,8 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
   const shippedByCall = new Map();
   const shell = { prs: 0, tests: 0, lints: 0, infra: 0 };
   let model = null;
+  // Effort per reply (`effort` on each assistant line): the one most replies ran at.
+  const efforts = new Map();
   let firstTs = null;
   let lastTs = null;
   let activeMs = 0;
@@ -572,6 +574,7 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
         // Every line of a message repeats its usage, so the first one already says the speed.
         const turnModel = withSpeed(normalizeModel(msg.model), msg.usage?.speed) ?? model;
         if (!model) model = turnModel;
+        if (typeof j.effort === "string" && j.effort) efforts.set(j.effort, (efforts.get(j.effort) ?? 0) + 1);
         turn = {
           tsMs,
           model: turnModel,
@@ -619,7 +622,7 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
         const input = c.input ?? {};
         if (c.id) callById.set(c.id, { tool: c.name, tsMs, msgId, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
         if (c.id) lastCallId = c.id;
-        if (c.id) full?.set(c.id, { input });
+        if (c.id) full?.set(c.id, { input, raw: c });
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
         turn.tools.push(name);
@@ -764,6 +767,7 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
       ...ship.snapshot(),
       shell,
       model,
+      effort: mostOf(efforts),
       firstTs,
       lastTs,
       activeMs,
@@ -786,6 +790,13 @@ function createTranscriptParser(path, sidechain, { full = null } = {}) {
   }
 
   return { line, result };
+}
+
+/** The key counted most often, or null. */
+function mostOf(counts) {
+  let best = null;
+  for (const [k, n] of counts) if (best === null || n > counts.get(best)) best = k;
+  return best;
 }
 
 /** A transcript line into `parser`; blank and unreadable lines are skipped. */
@@ -1269,6 +1280,8 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
         description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
+        model: sub.model ?? null,
+        effort: sub.effort ?? null,
         calls: relativizeToolSequence(ownOf(i + 1, sub.toolSequence).slice(0, maxCalls), startedAtMs),
       })),
     ),
@@ -1704,7 +1717,7 @@ export async function sessionCall(session, callId) {
   }
   if (!call) return null;
   const output = call.output === undefined ? null : capped(call.output);
-  return { input: call.input ?? {}, output, isError: !!call.isError };
+  return { input: call.input ?? {}, output, isError: !!call.isError, raw: call.raw ?? null };
 }
 
 /**

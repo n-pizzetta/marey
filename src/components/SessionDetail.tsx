@@ -1014,6 +1014,11 @@ function ToolSeqRow({
             <span aria-hidden="true">{subOpen ? "▾" : "▸"}</span>
             {" "}{kids.length} call{kids.length === 1 ? "" : "s"} in the sub-agent
             {entry.agentLabel && <span className="dim"> · {entry.agentLabel}</span>}
+            {entry.agentRun && (
+              <span className="dim" title="The model and effort the sub-agent ran at, from its own transcript">
+                {" · "}{[entry.agentRun.model, entry.agentRun.effort && `${entry.agentRun.effort} effort`].filter(Boolean).join(" · ")}
+              </span>
+            )}
             {kidsFailed > 0 && <span className="tool-seq-sub-failed"> · {kidsFailed} failed</span>}
           </button>
           {subOpen && (

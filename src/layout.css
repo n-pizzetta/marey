@@ -748,6 +748,8 @@
 .tool-seq-field .tool-seq-result { margin-top: 2px; }
 .tool-seq-field-inline { margin: 4px 12px 0 114px; font-size: var(--fs-sm); color: var(--c-text); overflow-wrap: anywhere; }
 .tool-seq-field-inline .tool-seq-field-key { margin: 0 6px 0 0; }
+.tool-seq-raw-toggle { display: flex; justify-content: flex-end; margin: 4px 12px -18px 114px; font-size: var(--fs-xs); }
+.tool-seq-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 .tools-head-meta { display: inline-flex; align-items: center; gap: 12px; font-size: var(--fs-base); font-weight: 400; letter-spacing: 0; }
 .tools-failed-n { color: var(--c-red); }
 /* a call that started a sub-agent opens onto the sub-agent's calls, indented under its name */

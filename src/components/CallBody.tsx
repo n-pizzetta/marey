@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ToolCall } from "../types";
 import { useCallDetail } from "../utils/callDetail";
 import { inputFields } from "../utils/callInput";
@@ -5,15 +6,30 @@ import { formatBytes } from "../utils/format";
 
 /**
  * An open call: its input field by field and its result, whole, fetched when the row opens. Until
- * then, and without a server, the preview the session's payload carries.
+ * then, and without a server, the preview the session's payload carries. "Raw JSON" shows the call
+ * as the transcript wrote it, nothing reread.
  */
 export function CallBody({ sessionId, entry }: { sessionId: string; entry: ToolCall }) {
   const { data, loading, failed } = useCallDetail(sessionId, entry.id, true);
   const isError = data ? data.isError : !!entry.result?.isError;
   const fields = data ? inputFields(data.input) : [];
+  const [raw, setRaw] = useState(false);
+  const hasRaw = data?.raw != null;
   return (
     <div className={`tool-seq-body ${loading ? "loading" : ""}`}>
-      {data && fields.length > 0 ? (
+      {hasRaw && (
+        <div className="tool-seq-raw-toggle">
+          <button className="link-btn mono" onClick={() => setRaw((v) => !v)} aria-pressed={raw}>
+            {raw ? "Fields" : "Raw JSON"}
+          </button>
+        </div>
+      )}
+      {raw && hasRaw ? (
+        <div className="tool-seq-field">
+          <div className="tool-seq-field-key mono dim">as written in the transcript</div>
+          <pre className="tool-seq-command tool-seq-raw mono">{JSON.stringify(data!.raw, null, 2)}</pre>
+        </div>
+      ) : data && fields.length > 0 ? (
         <div className="tool-seq-input">
           {fields.map((f) =>
             f.block ? (

@@ -200,6 +200,13 @@ function readOutput(p) {
  * `input_tokens` and reasoning inside `output_tokens`.
  */
 /** `full`: see createTranscriptParser in parse-sessions.mjs (an opened session's parse). */
+/** The key counted most often, or null. */
+function mostOf(counts) {
+  let best = null;
+  for (const [k, n] of counts) if (best === null || n > counts.get(best)) best = k;
+  return best;
+}
+
 export async function parseCodexRollout(path, { full: keep = null } = {}) {
   const maxCalls = keep ? 5000 : 300;
   const promptClip = keep ? 50_000 : 1500;
@@ -224,6 +231,8 @@ export async function parseCodexRollout(path, { full: keep = null } = {}) {
   const ship = createShipLog();
   let model = null;
   let firstModel = null;
+  // Reasoning effort per turn (`turn_context.effort`): the one most turns ran at.
+  const efforts = new Map();
   let firstTs = null;
   let lastTs = null;
   let activeMs = 0;
@@ -297,7 +306,7 @@ export async function parseCodexRollout(path, { full: keep = null } = {}) {
     }
     const id = p.call_id ?? p.id;
     // a script's output can come before the call is recorded (it still had commands running)
-    if (id) keep?.set(id, { ...keep.get(id), input });
+    if (id) keep?.set(id, { ...keep.get(id), input, raw: p });
     let entry = null;
     if (toolSequence.length < maxCalls) {
       let preview = "";
@@ -488,6 +497,7 @@ export async function parseCodexRollout(path, { full: keep = null } = {}) {
         model = normalizeModel(p.model);
         firstModel ??= model;
       }
+      if (typeof p.effort === "string" && p.effort) efforts.set(p.effort, (efforts.get(p.effort) ?? 0) + 1);
       if (!cwd && typeof p.cwd === "string") cwd = p.cwd;
     } else if (j.type === "response_item") {
       if (p.type === "message" && p.role === "assistant" && Array.isArray(p.content)) {
@@ -599,6 +609,7 @@ export async function parseCodexRollout(path, { full: keep = null } = {}) {
     ...ship.snapshot(),
     shell,
     model: firstModel,
+    effort: mostOf(efforts),
     firstTs,
     lastTs,
     activeMs,

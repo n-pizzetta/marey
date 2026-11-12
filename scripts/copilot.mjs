@@ -331,7 +331,7 @@ export async function parseCopilotEvents(path, { full: keep = null } = {}) {
         callById.set(d.toolCallId, call);
         if (!sub) lastCallId = d.toolCallId;
       }
-      if (d.toolCallId) keep?.set(d.toolCallId, { input: args });
+      if (d.toolCallId) keep?.set(d.toolCallId, { input: args, raw: j });
       if (toolSequence.length < maxCalls) {
         const entry = { tsMs, tool: name, preview: preview.slice(0, 160), id: d.toolCallId };
         if (full.length > 160) entry.full = full.slice(0, 8000);

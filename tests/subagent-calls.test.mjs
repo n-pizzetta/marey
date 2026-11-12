@@ -59,3 +59,9 @@ test("the count is every call, sub-agent calls included", () => {
   // 3 main-thread calls + 13 in the sub-agent, as the session's tool counts add up
   assert.equal(countNestedCalls(out), 16);
 });
+
+test("the model and effort a sub-agent ran at go on the call that started it", () => {
+  const main = [call(10, "Agent", { agentId: "a" }), call(20, "Agent", { agentId: "b" })];
+  const out = nestSubagentCalls(main, [run(11, 1, { agentId: "a", model: "sonnet-5.5", effort: "high" }), run(21, 1, { agentId: "b" })]);
+  assert.deepEqual(out.map((e) => e.agentRun), [{ model: "sonnet-5.5", effort: "high" }, undefined]);
+});
