@@ -19,6 +19,8 @@ versioning follows [SemVer](https://semver.org/).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
 
+## [0.16.0] — 2026-11-12
+
 ### Changed
 
 - Session detail, Tools: a call opens on its whole input and its whole result, read from the transcript when you open it, where it used to show the first 240 characters of the result and, for most tools, only a file path or a pattern. An edit shows its old and new text; a call that started a sub-agent shows the prompt the sub-agent was given and the report it sent back. The tab lists up to 5000 calls per transcript instead of 300, and prompts keep up to 50k characters instead of 1500.
