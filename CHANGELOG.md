@@ -9,6 +9,11 @@ versioning follows [SemVer](https://semver.org/).
 ### Added
 
 - Session detail, Tools: "Raw JSON" in an open call shows the call exactly as the transcript wrote it, every field included. A call that started a sub-agent says the model and effort the sub-agent ran at (`sonnet-5.5 · high effort`), read from the sub-agent's own transcript: the call often names only `sonnet`, and no effort.
+- Usage: the tokens chart stacks by project or by model, to see which models ran when. Drag across the bars to zoom on a stretch: the bars get finer, down to 5 minutes; double-click or Reset zoom to come back.
+
+### Changed
+
+- Usage: one color per project and per model across the page. The chart's colors are the Project league's when it is stacked by project, Model mix's when it is stacked by model, and the other card's bars stay gray, so a color never means two things. A project keeps its color when the range or the filters change. The six series colors are new, picked to stay apart for colorblind eyes too (blue and violet looked alike); the session list, Now and Journal use them.
 
 ### Fixed
 

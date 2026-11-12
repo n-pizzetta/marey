@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { costOf } from "../scripts/models.mjs";
 import { sessionCostPerKind } from "../src/utils/costPerKind.ts";
-import { bucketizeByProject } from "../src/utils/fleetStats.ts";
+import { bucketize, bucketSizeMs, seriesByTokens } from "../src/utils/fleetStats.ts";
 
 const tok = (input, output, cacheRead, cacheWrite) => ({ input, output, cacheRead, cacheWrite });
 // An Opus 5.5 session whose sub-agents ran on Haiku 5.5.
@@ -24,6 +24,15 @@ test("the per-kind costs add up to the per-turn cost, not the session model's", 
 
 test("the usage chart's buckets carry the per-turn cost", () => {
   const from = Date.parse(session.startedAt);
-  const [bucket] = bucketizeByProject([session], "all", from, from + 86_400_000);
-  near(bucket.byProject.get("p").cost, perTurn);
+  const [bucket] = bucketize([session], from, from + 86_400_000, bucketSizeMs("all"));
+  near(bucket.bySeries.get("p").cost, perTurn);
+});
+
+test("stacked by model, each turn goes to its own model", () => {
+  const from = Date.parse(session.startedAt);
+  const [bucket] = bucketize([session], from, from + 86_400_000, bucketSizeMs("all"), "model");
+  assert.deepEqual([...bucket.bySeries.keys()].sort(), ["haiku-5.5", "opus-5.5"]);
+  near(bucket.bySeries.get("haiku-5.5").cost, costOf("haiku-5.5", turns[1].tokens) + costOf("haiku-5.5", turns[2].tokens));
+  const withUsage = { ...session, modelUsage: { "opus-5.5": { tokens: 10, cost: 1 }, "haiku-5.5": { tokens: 30, cost: 0.1 } } };
+  assert.deepEqual(seriesByTokens([withUsage], "model"), ["haiku-5.5", "opus-5.5"]);
 });

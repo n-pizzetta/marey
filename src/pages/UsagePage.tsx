@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { Agent, Session } from "../types";
 import type { Range } from "../utils/range";
 import type { RateLimits } from "../utils/rateLimits";
 import { sessionProvider } from "../utils/providers";
+import { distinctColors, modelColor, projectColor, seriesByTokens, type SeriesBy } from "../utils/fleetStats";
 import { TokenTimeSeries } from "../components/fleet/TokenTimeSeries";
 import { ProjectRollup } from "../components/fleet/ProjectRollup";
 import { ModelMix } from "../components/fleet/ModelMix";
@@ -37,6 +38,13 @@ interface Props {
  * by project, model and tool; then what is worth fixing in how sessions run, one line each.
  */
 export function UsagePage({ sessions, allSessions, everySession, windowProviders, limits, range, scopeBar, stats, recommendations, onSelectSession }: Props) {
+  // One color per project and per model for the whole range: the chart, and the card it is stacked
+  // like (Project league or Model mix), share them; the other card stays neutral.
+  const [by, setBy] = useState<SeriesBy>("project");
+  const colors = useMemo(
+    () => ({ project: distinctColors(seriesByTokens(sessions, "project"), projectColor), model: distinctColors(seriesByTokens(sessions, "model"), modelColor) }),
+    [sessions],
+  );
   return (
     <div className="page">
       {windowProviders.length > 0 && (
@@ -55,10 +63,10 @@ export function UsagePage({ sessions, allSessions, everySession, windowProviders
       <PageSection title="History" note="Over the range and filters below">
         {scopeBar}
         {stats}
-        <TokenTimeSeries sessions={sessions} range={range} />
+        <TokenTimeSeries sessions={sessions} range={range} by={by} onBy={setBy} colors={colors[by]} />
         <div className="page-grid-3">
-          <ProjectRollup sessions={sessions} allSessions={allSessions} range={range} />
-          <ModelMix sessions={sessions} />
+          <ProjectRollup sessions={sessions} allSessions={allSessions} range={range} colors={by === "project" ? colors.project : null} />
+          <ModelMix sessions={sessions} colors={by === "model" ? colors.model : null} />
           <ToolsHeatmap sessions={sessions} />
         </div>
         <HeavyPrompts sessions={sessions} range={range} onSelectSession={onSelectSession} />
