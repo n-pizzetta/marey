@@ -20,6 +20,7 @@ import { addKindCost, costPerKind, sessionCostPerKind, ZERO_KIND_COST, type Kind
 import { toastError } from "../utils/toast";
 import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { keepFocus } from "../utils/keepFocus";
+import { CallBody } from "./CallBody";
 
 function gradeColor(grade: string): string {
   if (grade === "S" || grade === "A") return "var(--c-green)";
@@ -804,6 +805,9 @@ function OverviewTab({
   );
 }
 
+/** Calls an opened session lists per transcript: `MAX_DETAIL_CALLS` in scripts/parse-sessions.mjs. */
+const MAX_CALLS_SHOWN = 5000;
+
 function ToolsTab({
   session,
   focus,
@@ -836,8 +840,8 @@ function ToolsTab({
   const shown = failedOnly && failed > 0 ? onlyFailed(inFocus) : inFocus;
   // newest first; the newest call of a live session may still be running
   const sequence = [...shown].reverse();
-  const truncated = all.length >= 300;
-  // Capture stops at 300 calls: say so where the calls shown run past the last one captured.
+  const truncated = all.length >= MAX_CALLS_SHOWN;
+  // Capture stops at MAX_CALLS_SHOWN calls: say so where the calls shown run past the last one captured.
   const lastCaptured = all.length ? all[all.length - 1].t : 0;
   const pastCap = truncated && (!focus || focus.end > lastCaptured);
 
@@ -884,7 +888,7 @@ function ToolsTab({
           {sequence.length === 0 ? (
             <div className="placeholder">
               {focus && pastCap && focus.start >= lastCaptured
-                ? "This prompt's calls come after the first 300, the only ones captured. The By tool card counts them all."
+                ? `This prompt's calls come after the first ${MAX_CALLS_SHOWN}, the only ones captured. The By tool card counts them all.`
                 : "No tool sequence available. The By tool card has the counts."}
             </div>
           ) : (
@@ -895,6 +899,7 @@ function ToolsTab({
                   <ToolSeqRow
                     key={`${s.t}-${i}`}
                     entry={s}
+                    sessionId={session.id}
                     startedAt={session.startedAt}
                     pending={!!session.live && i === 0 && !s.result && !s.orphan && !failedOnly}
                     openSub={failedOnly || picked}
@@ -904,7 +909,7 @@ function ToolsTab({
               })}
               {pastCap && (
                 <div className="mono dim" style={{ padding: "8px 10px", fontSize: "var(--fs-sm)" }}>
-                  (later tool calls truncated — showing the first 300 of each transcript)
+                  (later tool calls truncated — showing the first {MAX_CALLS_SHOWN} of each transcript)
                 </div>
               )}
             </div>
@@ -939,12 +944,14 @@ function ToolsTab({
 /** One call. A call that started a sub-agent opens onto the sub-agent's calls, nested under it. */
 function ToolSeqRow({
   entry,
+  sessionId,
   startedAt,
   pending,
   openSub = false,
   rowRef,
 }: {
   entry: ToolCall;
+  sessionId: string;
   startedAt: string;
   pending?: boolean;
   /** Start with the sub-agent's calls shown (the failed-only view, a sub-agent picked on Now). */
@@ -955,8 +962,8 @@ function ToolSeqRow({
   const [open, setOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(openSub);
   const hasResult = !!entry.result;
-  const hasFull = !!entry.full;
-  const expandable = hasResult || hasFull;
+  // an opened session's calls carry their id: the row opens on the call's whole input and result
+  const expandable = hasResult || !!entry.full || (!!entry.id && !entry.orphan);
   const isError = !!entry.result?.isError;
   const resultOneLine = entry.result?.text.replace(/\s+/g, " ").trim() ?? "";
   const status = entry.orphan ? "sub-agent" : pending ? "running" : isError ? "error" : hasResult ? "ok" : "no result";
@@ -991,15 +998,7 @@ function ToolSeqRow({
         </span>
         <span className="tool-seq-toggle mono dim" aria-hidden="true">{expandable ? (open ? "▾" : "▸") : ""}</span>
       </button>
-      {open && (
-        <pre className="tool-seq-command mono">{entry.full ?? entry.preview}</pre>
-      )}
-      {hasResult && open && (
-        <pre className={`tool-seq-result mono ${isError ? "is-error" : ""}`}>
-          {entry.result!.text}
-          {entry.result!.truncated && <span className="dim"> …</span>}
-        </pre>
-      )}
+      {open && <CallBody sessionId={sessionId} entry={entry} />}
       {/* successes stay one line; failures show why */}
       {isError && !open && (
         <div className="tool-seq-result-hint mono">
@@ -1017,7 +1016,7 @@ function ToolSeqRow({
           {subOpen && (
             <div className="tool-seq-children">
               {kidsShown.map((c, i) => (
-                <ToolSeqRow key={`${c.t}-${i}`} entry={c} startedAt={startedAt} pending={pending && i === 0 && !c.result} />
+                <ToolSeqRow key={`${c.t}-${i}`} entry={c} sessionId={sessionId} startedAt={startedAt} pending={pending && i === 0 && !c.result} />
               ))}
             </div>
           )}

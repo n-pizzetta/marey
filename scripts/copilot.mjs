@@ -179,7 +179,10 @@ function quotaOf(snapshots, tsMs) {
  * `cost`, the premium request multiplier of calls the user started, predates
  * the switch to AI credits and no longer tracks the quota.
  */
-export async function parseCopilotEvents(path) {
+/** `full`: see createTranscriptParser in parse-sessions.mjs (an opened session's parse). */
+export async function parseCopilotEvents(path, { full: keep = null } = {}) {
+  const maxCalls = keep ? 5000 : 300;
+  const promptClip = keep ? 50_000 : 1500;
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
@@ -262,7 +265,7 @@ export async function parseCopilotEvents(path) {
       if (!firstUserText) firstUserText = text;
       pendingIn = { bytes: pendingIn.bytes + text.length, preview: text.slice(0, 200) };
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
-      if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+      if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, promptClip), preview: firstLineSummary(text) });
       else promptsCutAt ??= tsMs;
     } else if (type === "session.usage_record") {
       const u = d.usage ?? {};
@@ -328,7 +331,8 @@ export async function parseCopilotEvents(path) {
         callById.set(d.toolCallId, call);
         if (!sub) lastCallId = d.toolCallId;
       }
-      if (toolSequence.length < 300) {
+      if (d.toolCallId) keep?.set(d.toolCallId, { input: args });
+      if (toolSequence.length < maxCalls) {
         const entry = { tsMs, tool: name, preview: preview.slice(0, 160), id: d.toolCallId };
         if (full.length > 160) entry.full = full.slice(0, 8000);
         toolSequence.push(entry);
@@ -338,6 +342,8 @@ export async function parseCopilotEvents(path) {
       const body = resultText(d);
       ship.result(callById.get(d.toolCallId)?.shipped, body, d.success === false);
       resultById.set(d.toolCallId, { text: body.slice(0, 240), truncated: body.length > 240, isError: d.success === false, bytes: body.length });
+      const kept = keep?.get(d.toolCallId);
+      if (kept) Object.assign(kept, { output: body, isError: d.success === false });
       pendingIn.bytes += body.length;
       if (!pendingIn.preview) pendingIn.preview = `[tool_result] ${body.slice(0, 200)}`;
     } else if (type === "system.message") {
@@ -375,7 +381,7 @@ export async function parseCopilotEvents(path) {
     }
     if (entry.result) break;
   }
-  for (const entry of toolSequence) delete entry.id;
+  if (!keep) for (const entry of toolSequence) delete entry.id;
 
   const quotaEvent = lastQuotaLine ? parseJson(lastQuotaLine) : null;
   if (quotaEvent) lastQuotaTs = Date.parse(quotaEvent.timestamp ?? "") || null;

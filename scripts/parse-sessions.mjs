@@ -62,6 +62,11 @@ const WAIT_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 const MAX_INCIDENTS = 500;
 /** Calls kept per transcript, with their input and result, for the session view. */
 const MAX_CALLS = 300;
+/** Calls kept per transcript when a session is opened (`sessionDetail`): its Tools tab lists them. */
+const MAX_DETAIL_CALLS = 5000;
+/** A prompt's text, in the list's parse and in an opened session's. */
+const PROMPT_CLIP = 1500;
+const DETAIL_PROMPT_CLIP = 50_000;
 /** Commits and pull requests kept per session (the journal lists them). */
 const MAX_SHIPPED = 100;
 
@@ -355,7 +360,7 @@ function lightTranscript(t) {
  * A parsed transcript. `light` keeps `lightTranscript` of it in the cache; `cached: false` (a
  * session's detail) parses it whole and keeps nothing.
  */
-async function readTranscriptFile(path, { sidechain = false, agent = "claude", light = false, cached = true } = {}) {
+async function readTranscriptFile(path, { sidechain = false, agent = "claude", light = false, cached = true, full = null } = {}) {
   if (cached) readThisParse.add(path);
   let st;
   try { st = await fspStat(path); } catch { transcriptCache.delete(path); return null; }
@@ -369,9 +374,9 @@ async function readTranscriptFile(path, { sidechain = false, agent = "claude", l
   try {
     if (cached && light && agent === "claude") return await readClaudeLight(path, st, sidechain, hit?.light ? hit : null);
     parsed =
-      agent === "codex" ? await parseCodexRollout(path)
-      : agent === "copilot" ? await parseCopilotEvents(path)
-      : await parseTranscriptFile(path, sidechain);
+      agent === "codex" ? await parseCodexRollout(path, { full })
+      : agent === "copilot" ? await parseCopilotEvents(path, { full })
+      : await parseTranscriptFile(path, sidechain, { full });
   } catch (err) {
     // Deleted between the stat and the read, or unreadable: no transcript, like a failed stat.
     transcriptCache.delete(path);
@@ -469,7 +474,13 @@ async function feedFrom(path, from, parser) {
  * What it keeps across lines is copied (`clip`, `own`): a server keeps the parser of a transcript
  * that is still being written, and a slice would keep every tool output it was cut from.
  */
-function createTranscriptParser(path, sidechain) {
+/**
+ * `full`: a map an opened session's parse fills with each call's whole input and result, by call id
+ * (`sessionCall`); the parse then also keeps up to MAX_DETAIL_CALLS calls and longer prompts.
+ */
+function createTranscriptParser(path, sidechain, { full = null } = {}) {
+  const maxCalls = full ? MAX_DETAIL_CALLS : MAX_CALLS;
+  const promptClip = full ? DETAIL_PROMPT_CLIP : PROMPT_CLIP;
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
@@ -608,6 +619,7 @@ function createTranscriptParser(path, sidechain) {
         const input = c.input ?? {};
         if (c.id) callById.set(c.id, { tool: c.name, tsMs, msgId, command: typeof input.command === "string" ? clip(input.command, 300) : null, file: typeof input.file_path === "string" ? input.file_path : null, ask: own(askText(c.name, input)) });
         if (c.id) lastCallId = c.id;
+        if (c.id) full?.set(c.id, { input });
         quality?.onToolUse(c.name, input, c.id);
         toolCounts[name] = (toolCounts[name] ?? 0) + 1;
         turn.tools.push(name);
@@ -628,7 +640,7 @@ function createTranscriptParser(path, sidechain) {
           if (!pathByHash.has(hash)) pathByHash.set(hash, input.file_path);
         }
         const budget = copied(j) ? "copied" : "own";
-        if (callsKept[budget] < MAX_CALLS) {
+        if (callsKept[budget] < maxCalls) {
           callsKept[budget]++;
           let preview = "";
           let full = "";
@@ -669,6 +681,8 @@ function createTranscriptParser(path, sidechain) {
             resultCount++;
             answered.add(tr.tool_use_id);
             ship.result(shippedByCall.get(tr.tool_use_id), body, !!tr.is_error);
+            const kept = full?.get(tr.tool_use_id);
+            if (kept) Object.assign(kept, { output: body, isError: !!tr.is_error });
             const incident = incidentOf(j, tr, body, callById.get(tr.tool_use_id), tsMs);
             if (incident && incidents.length < MAX_INCIDENTS) {
               incidents.push(incident);
@@ -696,7 +710,7 @@ function createTranscriptParser(path, sidechain) {
       if (sidechain || j.isSidechain === true || (text && NON_PROMPT_RE.test(text))) {
         if (text) pendingInBytes += text.length;
         if (sidechain && text && subPrompt === null) {
-          subPrompt = clip(text, 1500);
+          subPrompt = clip(text, promptClip);
           subBrief = briefOf(text);
         }
         return;
@@ -709,7 +723,7 @@ function createTranscriptParser(path, sidechain) {
       }
       absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
       if (text) {
-        if (prompts.length < 100) prompts.push({ tsMs, activeAt: activeMs, text: clip(text, 1500), preview: own(firstLineSummary(text)) });
+        if (prompts.length < 100) prompts.push({ tsMs, activeAt: activeMs, text: clip(text, promptClip), preview: own(firstLineSummary(text)) });
         else promptsCutAt ??= tsMs;
       }
     }
@@ -719,6 +733,8 @@ function createTranscriptParser(path, sidechain) {
     // Each call with its result and the sub-agent it ran, on copies: the parser keeps its entries.
     const calls = toolSequence.map(({ id, ...entry }) => ({
       ...entry,
+      // an opened session's calls keep their id: the Tools tab asks for a call's whole input and result by it
+      ...(full && id ? { id } : {}),
       ...(id && resultById.has(id) ? { result: resultById.get(id) } : {}),
       ...(id && agentIdByToolUse.has(id) ? { agentId: agentIdByToolUse.get(id) } : {}),
     }));
@@ -784,8 +800,8 @@ function feedLine(parser, text) {
  * One pass over a Claude Code transcript: `createTranscriptParser` fed every line. Lines end at
  * `\n` only (`feedFrom`): readline also ends them at U+2028 and U+2029, which JSON strings may hold.
  */
-async function parseTranscriptFile(path, sidechain) {
-  const parser = createTranscriptParser(path, sidechain);
+async function parseTranscriptFile(path, sidechain, opts) {
+  const parser = createTranscriptParser(path, sidechain, opts);
   await feedFrom(path, 0, parser);
   return parser.result();
 }
@@ -815,6 +831,7 @@ function relativizeToolSequence(seq, startedAt) {
     tool: s.tool,
     preview: s.preview,
     ...(s.full ? { full: s.full } : {}),
+    ...(s.id ? { id: s.id } : {}),
     ...(s.result ? { result: s.result } : {}),
     ...(s.agentId ? { agentId: s.agentId } : {}),
   }));
@@ -1104,6 +1121,7 @@ function agentContextOf(agent, t, subs) {
 async function buildSession(id, { entry, meta, facet, live, dead, history, now, codexChildren = [], copies = null, transcript, read = {} }) {
   const agent = entry?.agent ?? "claude";
   const light = !!read.light;
+  const maxCalls = read.full ? MAX_DETAIL_CALLS : MAX_CALLS;
   // `transcript`: already read by this parse.
   const t = transcript !== undefined ? transcript : entry ? await readTranscriptFile(entry.path, { ...read, agent }) : null;
   if (!t && !meta && !live) return null;
@@ -1244,14 +1262,14 @@ async function buildSession(id, { entry, meta, facet, live, dead, history, now, 
     toolSequence: light ? [] : nestSubagentCalls(
       // The hook's calls only stand in for a missing transcript: next to one they are all duplicates
       // (a sub-agent's calls among them), which no timestamp match can tell apart.
-      t ? relativizeToolSequence(ownOf(0, t.toolSequence).slice(0, MAX_CALLS), startedAtMs) : pluginCache.entries,
+      t ? relativizeToolSequence(ownOf(0, t.toolSequence).slice(0, maxCalls), startedAtMs) : pluginCache.entries,
       subs.map((sub, i) => ({
         agentId: sub.agentId ?? null,
         prompt: sub.subPrompt ?? sub.firstUserText ?? null,
         description: sub.description ?? null,
         firstT: sub.firstTs ? Math.max(0, sub.firstTs - startedAtMs) : 0,
         label: sub.label ?? null,
-        calls: relativizeToolSequence(ownOf(i + 1, sub.toolSequence).slice(0, MAX_CALLS), startedAtMs),
+        calls: relativizeToolSequence(ownOf(i + 1, sub.toolSequence).slice(0, maxCalls), startedAtMs),
       })),
     ),
     turns,
@@ -1643,17 +1661,50 @@ const DETAIL_FIELDS = ["prompts", "toolSequence", "turns", "timeline", "fileHist
 export async function sessionDetail(session) {
   const input = buildInputs.get(session.id);
   if (!input) return session;
-  const read = { cached: false };
+  const read = { cached: false, full: new Map() };
   const codexChildren = [];
   for (const entry of input.codexChildEntries ?? []) {
     const t = await readTranscriptFile(entry.path, { ...read, agent: "codex" });
     if (t) codexChildren.push(t);
   }
-  const full = await buildSession(session.id, { ...input, history: new Map(), now: Date.now(), codexChildren, read });
-  if (!full) return session;
+  const built = await buildSession(session.id, { ...input, history: new Map(), now: Date.now(), codexChildren, read });
+  if (!built) return session;
+  keepCalls(session.id, read.full);
   const detail = { ...session };
-  for (const key of DETAIL_FIELDS) detail[key] = full[key];
+  for (const key of DETAIL_FIELDS) detail[key] = built[key];
   return detail;
+}
+
+/** The whole input and result of each call of the sessions opened last, by session id, most recent last. */
+const openedCalls = new Map();
+const OPENED_KEEP = 3;
+
+function keepCalls(id, calls) {
+  openedCalls.delete(id);
+  openedCalls.set(id, calls);
+  while (openedCalls.size > OPENED_KEEP) openedCalls.delete(openedCalls.keys().next().value);
+}
+
+/** What a call returns past this is left out: a browser renders a few MB of text slowly. */
+const CALL_TEXT_MAX = 1 << 20;
+
+const capped = (text) => (text.length > CALL_TEXT_MAX ? { text: text.slice(0, CALL_TEXT_MAX), cut: text.length } : { text });
+
+/**
+ * One call of a session, whole: its input as the agent wrote it and its result as the tool returned
+ * it (up to CALL_TEXT_MAX), or null when the session's transcripts have no such call. Read from the
+ * last opening of the session, parsed again when it isn't kept or, for a running session, when the
+ * call had no result yet.
+ */
+export async function sessionCall(session, callId) {
+  let call = openedCalls.get(session.id)?.get(callId);
+  if (!call || (session.live && call.output === undefined)) {
+    await sessionDetail(session);
+    call = openedCalls.get(session.id)?.get(callId);
+  }
+  if (!call) return null;
+  const output = call.output === undefined ? null : capped(call.output);
+  return { input: call.input ?? {}, output, isError: !!call.isError };
 }
 
 /**

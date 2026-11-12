@@ -13,7 +13,7 @@ import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { promises as fsp, watch, existsSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { claudePids, mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
+import { claudePids, mergeLimits, parseAllSessions, readLimits, readLiveContext, sessionCall, sessionDetail, summarizeSession } from "./parse-sessions.mjs";
 import { dataDir } from "./data-dir.mjs";
 import { availableUpdate, latestVersion } from "./update-check.mjs";
 import { focusSession } from "./focus-terminal.mjs";
@@ -375,6 +375,18 @@ async function handleApi(req, res) {
     } catch (e) {
       return send(res, e.status ?? 500, e.message);
     }
+  }
+
+  // One call of an opened session, whole (the detail payload cuts inputs and results short).
+  const callMatch = url.match(/^\/api\/sessions\/([a-f0-9-]{36})\/calls\/([^/?]{1,200})(?:\?|$)/i);
+  if (callMatch) {
+    const s = cache.byId.get(callMatch[1]);
+    if (!s) return send(res, 404, "session not found");
+    let callId;
+    try { callId = decodeURIComponent(callMatch[2]); } catch { return send(res, 400, "invalid call id"); }
+    res.setHeader("cache-control", "no-store");
+    const call = await sessionCall(s, callId);
+    return call ? sendJson(res, 200, call) : send(res, 404, "call not found");
   }
 
   const sessionMatch = url.match(/^\/api\/sessions\/([a-f0-9-]{36})(?:\?|$)/i);

@@ -54,6 +54,8 @@ export interface ToolCall {
   tool: string;
   preview: string;
   full?: string;
+  /** In an opened session's payload: the call's id, to fetch its whole input and result (`useCallDetail`). */
+  id?: string;
   result?: { text: string; truncated: boolean; isError: boolean; bytes?: number };
   source?: "plugin";
   /** Calls made by the sub-agent this call started (Agent / Task / spawn_agent). */
