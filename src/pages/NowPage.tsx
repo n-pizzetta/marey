@@ -9,6 +9,7 @@ import { planUsage, runningUsage, sessionColors } from "../utils/planUsage";
 import type { RateLimits } from "../utils/rateLimits";
 import { loadWindowStart } from "../utils/windowState";
 import { useNow } from "../utils/useNow";
+import { byLastActive } from "../utils/lastActive";
 
 interface Props {
   /** Every provider's sessions: each plan card reads its own. */
@@ -87,7 +88,7 @@ export function NowPage({ allSessions, provider, providers, limits, onSelectSess
           note="Nothing running"
           aside={<button className="link-btn" onClick={onShowAllSessions}>All sessions →</button>}
         >
-          <SessionList sessions={sessions.slice(0, LATEST)} onSelect={onSelectSession} autoHeight />
+          <SessionList sessions={[...sessions].sort(byLastActive).slice(0, LATEST)} onSelect={onSelectSession} autoHeight />
         </PageSection>
       )}
     </div>

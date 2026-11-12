@@ -11,6 +11,7 @@ import { canOpenTerminal, openTerminal } from "../utils/openTerminal";
 import { useNow } from "../utils/useNow";
 import type { ContextSnapshot } from "../../scripts/context-advice.mjs";
 import type { Sort, SortKey } from "../utils/sortSessions";
+import { lastActiveMs } from "../utils/lastActive";
 
 interface Props {
   sessions: Session[];
@@ -41,8 +42,8 @@ type Item =
   | { kind: "head"; key: string; label: string; count: number; cost: number; fresh: number; top: number; h: number }
   | { kind: "row"; s: Session; top: number; h: number };
 
-function dayLabel(iso: string, now: Date): string {
-  const d = new Date(iso);
+function dayLabel(ms: number, now: Date): string {
+  const d = new Date(ms);
   const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diffDays = Math.round((startOf(now) - startOf(d)) / 86_400_000);
   if (diffDays <= 0) return "Today";
@@ -50,12 +51,12 @@ function dayLabel(iso: string, now: Date): string {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
-/** Flat, virtualizable list. Sorted by date, a day header opens each day; otherwise rows only. */
+/** Flat, virtualizable list. Sorted by last activity, a day header opens each day; otherwise rows only. */
 function buildItems(sessions: Session[], snaps: Map<string, ContextSnapshot>, grouped: boolean): { items: Item[]; total: number } {
   const now = new Date();
   const groups: Array<{ label: string; rows: Session[] }> = [];
   for (const s of sessions) {
-    const label = grouped ? dayLabel(s.startedAt, now) : "";
+    const label = grouped ? dayLabel(lastActiveMs(s), now) : "";
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.rows.push(s);
     else groups.push({ label, rows: [s] });
@@ -156,7 +157,7 @@ export function SessionList({
 
   const snapshots = useSnapshotMap();
   const now = useNow(30_000);
-  const grouped = !sort || sort.key === "started";
+  const grouped = !sort || sort.key === "recent";
   const { items, total } = useMemo(() => buildItems(sessions, snapshots, grouped && !autoHeight), [sessions, snapshots, grouped, autoHeight]);
 
   // ↑ / ↓ in the session view: keep the selected row in view, below the sticky column header.
@@ -203,7 +204,7 @@ export function SessionList({
         <span className="st-col-flags" />
         {sortHead("usage", unit === "tokens" ? "Tokens" : "API value", `${unit === "tokens" ? "Fresh tokens" : "API value"}\n${API_VALUE_HINT}`)}
         {sortHead("active", "Active", "Active time: idle gaps over 5 minutes are excluded")}
-        {sortHead("started", "Started")}
+        {sortHead("recent", "Last active", "When the session last did something. Hover a date for when it started.")}
       </div>
       <div className="st-scroll" ref={scrollRef}>
         {sessions.length === 0 ? (
@@ -309,7 +310,7 @@ export function SessionList({
                       {formatUsage(unit, s.tokens, s.costUsd)}
                     </span>
                     <span className="st-num mono tabular">{formatDuration(s.durationMs)}</span>
-                    <span className="st-num mono tabular dim" title={new Date(s.startedAt).toLocaleString()}>{formatRelative(s.startedAt)}</span>
+                    <span className="st-num mono tabular dim" title={`Started ${new Date(s.startedAt).toLocaleString()}\nLast active ${new Date(lastActiveMs(s)).toLocaleString()}`}>{formatRelative(new Date(lastActiveMs(s)).toISOString())}</span>
                   </div>
                 );
               })}

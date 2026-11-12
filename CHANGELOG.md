@@ -19,6 +19,10 @@ versioning follows [SemVer](https://semver.org/).
 - Per-session disk cache (`~/.claude/marey/cache/parsed/{id}.json`)
   with mtime invalidation, so cold start doesn't re-parse the full set.
 
+### Fixed
+
+- Sessions: the table orders and groups sessions by when they were last active, not when they started, so a session started yesterday and still in use today sits under Today. The column is now Last active; its tooltip keeps the start. The latest sessions on Now follow the same order.
+
 ## [0.15.0] — 2026-11-12
 
 ### Added

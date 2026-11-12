@@ -45,7 +45,7 @@ const FILTER_IDS: FilterId[] = ["all", "live", "ghost", "friction", "failed", "l
 const RANGE_IDS: Range[] = ["today", "7d", "30d", "all"];
 /** Sessions that can be compared side by side. Not applied to the ghost bulk-delete selection. */
 const MAX_COMPARE = 3;
-const DEFAULT_SORT: Sort = { key: "started", dir: "desc" };
+const DEFAULT_SORT: Sort = { key: "recent", dir: "desc" };
 
 interface PersistedState {
   page: Page;
