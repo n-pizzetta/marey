@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Session } from "../types";
 import { classifyPrompt, PROMPT_KIND_COLOR, PROMPT_KIND_LABEL } from "../utils/classifyPrompt";
 import { callsPerPrompt } from "../utils/toolCalls";
 import { buildSessionTimeline, TIMELINE_GAP_MS, type TimelinePoint } from "../utils/sessionTimeline";
 import { formatClockAt, formatCost, formatDuration, formatTokens } from "../utils/format";
 import { KpiRow } from "./Kpi";
+import { useZoomGestures, useZoomView } from "../utils/chartZoom";
 import "../timeline.css";
 
 const PAD_L = 46;
@@ -49,11 +50,28 @@ export function TimelineTab({
   const data = useMemo(() => buildSessionTimeline(session, liveOffset), [session, liveOffset]);
   const [wrapRef, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<{ x: number; point: TimelinePoint } | null>(null);
+  // Zoom on the drawn axis (idle gaps shortened), down to 20 s or a 400th of the session.
+  const axisEnd = data?.axisEnd ?? 1;
+  const zoom = useZoomView([0, axisEnd], Math.max(20_000, axisEnd / 400));
+  const svgRef = useRef<SVGSVGElement>(null);
+  const innerW = Math.max(1, width - PAD_L - PAD_R);
+  const { sel, handlers } = useZoomGestures(svgRef, zoom, () => {
+    const r = svgRef.current?.getBoundingClientRect();
+    return r ? { left: r.left + PAD_L, width: innerW } : null;
+  });
+  const clipId = useId();
 
   if (!data) return <div className="placeholder">No turn data for this session.</div>;
 
-  const innerW = Math.max(1, width - PAD_L - PAD_R);
-  const X = (t: number) => PAD_L + (data.axis(t) / data.axisEnd) * innerW;
+  const [v0, v1] = zoom.view;
+  const X = (t: number) => PAD_L + ((data.axis(t) - v0) / (v1 - v0)) * innerW;
+  const inView = (t: number) => { const a = data.axis(t); return a >= v0 && a <= v1; };
+  // the session time drawn at a point of the axis (the axis is monotonic)
+  const timeAt = (a: number) => {
+    let lo = data.start, hi = data.end;
+    for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (data.axis(mid) < a) lo = mid; else hi = mid; }
+    return hi;
+  };
   const top = { ctx: 18, cost: 0, fresh: 0, activity: 0, axis: 0 };
   top.cost = top.ctx + LANES.ctx + LANE_GAP;
   top.fresh = top.cost + LANES.cost + LANE_GAP;
@@ -65,8 +83,10 @@ export function TimelineTab({
   const yCtx = (pct: number) => top.ctx + LANES.ctx * (1 - Math.min(100, pct) / 100);
   const maxCost = Math.max(0.01, data.totalCost);
   const yCost = (c: number) => top.cost + LANES.cost * (1 - c / maxCost);
-  const maxFresh = Math.max(1, ...data.points.map((p) => p.fresh));
-  const barW = Math.max(1.5, Math.min(6, innerW / Math.max(1, data.points.length) - 1));
+  // fresh tokens scale to the turns in view, so a zoom shows the small ones
+  const shownPoints = zoom.zoomed ? data.points.filter((p) => inView(p.t)) : data.points;
+  const maxFresh = Math.max(1, ...shownPoints.map((p) => p.fresh));
+  const barW = Math.max(1.5, Math.min(zoom.zoomed ? 14 : 6, innerW / Math.max(1, shownPoints.length) - 1));
 
   // Context as a step line: the context holds until the next main-thread turn.
   let ctxPath = "";
@@ -86,7 +106,7 @@ export function TimelineTab({
   for (const p of data.points) { costPath += ` L${X(p.t)},${yCost(prevCum)} L${X(p.t)},${yCost(p.cumCost)}`; prevCum = p.cumCost; }
   costPath += ` L${X(data.end)},${yCost(prevCum)}`;
 
-  const ticks = axisTicks(Date.parse(session.startedAt), data.start, data.end, data.gaps, innerW);
+  const { ticks, seconds } = axisTicks(Date.parse(session.startedAt), zoom.zoomed ? timeAt(v0) : data.start, zoom.zoomed ? timeAt(v1) : data.end, data.gaps, innerW);
   const lastMain = main[main.length - 1];
   const idleMs = data.gaps.reduce((a, g) => a + (g.to - g.from), 0);
 
@@ -94,8 +114,9 @@ export function TimelineTab({
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     if (x < PAD_L || x > PAD_L + innerW) { setHover(null); return; }
-    let best = data.points[0], bestD = Infinity;
-    for (const p of data.points) { const d = Math.abs(X(p.t) - x); if (d < bestD) { bestD = d; best = p; } }
+    if (shownPoints.length === 0) { setHover(null); return; }
+    let best = shownPoints[0], bestD = Infinity;
+    for (const p of shownPoints) { const d = Math.abs(X(p.t) - x); if (d < bestD) { bestD = d; best = p; } }
     setHover({ x: X(best.t), point: best });
   };
 
@@ -124,6 +145,7 @@ export function TimelineTab({
         <div className="section-title tl-head">
           <span>Flight data</span>
           {session.live && <span className="tl-live"><i aria-hidden="true" />live</span>}
+          {zoom.zoomed && <button className="link-btn tl-zoom-reset" onClick={zoom.reset}>Reset zoom</button>}
           <span className="tl-legend mono">
             <span><i className="sw ctx" />context</span>
             <span><i className="sw cost" />API value</span>
@@ -136,7 +158,7 @@ export function TimelineTab({
         </div>
         <div className="tl-wrap" ref={wrapRef}>
           {width > 0 && (
-            <svg className="tl-svg" width={width} height={height} onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img"
+            <svg ref={svgRef} className="tl-svg zoomable" width={width} height={height} onMouseMove={onMove} onMouseLeave={() => setHover(null)} {...handlers} role="img"
               aria-label={`Session timeline: context peaks at ${Math.round(data.peakPct)}%, ${data.compactions.length} compactions, ${formatCost(data.totalCost)} API value, ${data.failedTools} failed tool calls`}>
               {/* lane labels */}
               <text className="tl-lane" x={PAD_L} y={top.ctx} dy={-7}>context</text>
@@ -144,6 +166,12 @@ export function TimelineTab({
               <text className="tl-lane" x={PAD_L} y={top.fresh} dy={-7}>fresh tokens / turn</text>
               <text className="tl-lane" x={PAD_L} y={top.activity} dy={-7}>prompts and tool calls</text>
 
+              <defs>
+                <clipPath id={clipId}>
+                  <rect x={PAD_L - 6} y={0} width={innerW + 12} height={height} />
+                </clipPath>
+              </defs>
+              <g clipPath={`url(#${clipId})`}>
               {/* gaps */}
               {data.gaps.map((g) => {
                 const x0 = X(g.from), x1 = X(g.to);
@@ -214,15 +242,21 @@ export function TimelineTab({
                 </g>
               ))}
 
-              {/* time axis */}
+              </g>
+
+              {/* time axis, outside the clip so the edge labels aren't cut */}
               {ticks.map((t) => (
-                <text key={t} className="tl-x" x={X(t)} y={top.axis + 12}>{formatClockAt(session.startedAt, t, { seconds: false })}</text>
+                <text key={t} className="tl-x" x={X(t)} y={top.axis + 12}>{formatClockAt(session.startedAt, t, { seconds })}</text>
               ))}
 
-              {hover && <line className="tl-cross" x1={hover.x} x2={hover.x} y1={top.ctx} y2={top.activity + LANES.activity} />}
+              {hover && !sel && <line className="tl-cross" x1={hover.x} x2={hover.x} y1={top.ctx} y2={top.activity + LANES.activity} />}
+              {sel && (
+                <rect className="zoom-selection" x={PAD_L + Math.min(sel.f0, sel.f1) * innerW} y={top.ctx}
+                  width={Math.abs(sel.f1 - sel.f0) * innerW} height={top.activity + LANES.activity - top.ctx} />
+              )}
             </svg>
           )}
-          {hover && (
+          {hover && !sel && (
             <div className={`tl-tip ${hover.x > width - 220 ? "left" : ""}`} style={{ left: hover.x, top: top.cost }}>
               <div className="mono tl-tip-t">{formatClockAt(session.startedAt, hover.point.t)}{hover.point.sidechain ? " · sub-agent" : ""}</div>
               <div><span>Context</span><b>{hoverCtx ? `${Math.round(hoverCtx.ctxPct!)}% · ${formatTokens(hoverCtx.ctx!)}` : "—"}</b></div>
@@ -233,7 +267,7 @@ export function TimelineTab({
           )}
         </div>
         <p className="tl-note">
-          Context is the prompt size of each main-thread turn (input + cache), against a {formatTokens(data.window)} window. Idle gaps over 5 minutes are shortened. Click a prompt marker to see its tool calls.
+          Context is the prompt size of each main-thread turn (input + cache), against a {formatTokens(data.window)} window. Idle gaps over 5 minutes are shortened. Click a prompt marker to see its tool calls. Drag across the chart to zoom on a stretch, pinch to zoom in or out, swipe sideways to move; double-click to zoom out.
           {data.frictions.length > 0 && " Frictions come from /insights, which gives no time: their place is approximate."}
         </p>
       </div>
@@ -321,18 +355,22 @@ function TimelinePrompts({
   );
 }
 
-/** About one label per 110px, on round wall-clock steps, skipping compressed gaps. Returns session offsets. */
+/**
+ * About one label per 110px, on round wall-clock steps (seconds once zoomed in close), skipping
+ * compressed gaps. Returns session offsets, and whether the labels need seconds.
+ */
 function axisTicks(base: number, start: number, end: number, gaps: Array<{ from: number; to: number }>, innerW: number) {
   const span = end - start;
-  if (span <= 0) return [start];
+  if (span <= 0) return { ticks: [start], seconds: false };
   const want = Math.max(2, Math.floor(innerW / 110));
-  const steps = [60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 14_400_000];
-  const active = span - gaps.reduce((a, g) => a + (g.to - g.from), 0);
+  const steps = [5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 14_400_000];
+  const inSpan = gaps.map((g) => ({ from: Math.max(g.from, start), to: Math.min(g.to, end) })).filter((g) => g.to > g.from);
+  const active = span - inSpan.reduce((a, g) => a + (g.to - g.from), 0);
   const step = steps.find((st) => active / st <= want) ?? steps[steps.length - 1];
   const out: number[] = [];
   for (let abs = Math.ceil((base + start) / step) * step; abs <= base + end; abs += step) {
     const t = abs - base;
     if (!gaps.some((g) => t > g.from && t < g.to)) out.push(t);
   }
-  return out.length ? out : [start];
+  return { ticks: out.length ? out : [start], seconds: step < 60_000 };
 }

@@ -1,6 +1,7 @@
 /* ---- Session timeline tab ---- */
 
 .tl-head { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.tl-zoom-reset { font-size: var(--fs-sm); }
 .tl-live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 500; color: var(--c-green); }
 .tl-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--c-green); animation: tl-pulse 1.6s ease-in-out infinite; }
 @keyframes tl-pulse { 50% { opacity: .35; } }
