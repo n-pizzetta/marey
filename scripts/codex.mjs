@@ -199,7 +199,10 @@ function readOutput(p) {
  * with an unchanged total are skipped. OpenAI counts cached tokens inside
  * `input_tokens` and reasoning inside `output_tokens`.
  */
-export async function parseCodexRollout(path) {
+/** `full`: see createTranscriptParser in parse-sessions.mjs (an opened session's parse). */
+export async function parseCodexRollout(path, { full: keep = null } = {}) {
+  const maxCalls = keep ? 5000 : 300;
+  const promptClip = keep ? 50_000 : 1500;
   const toolCounts = {};
   const absEvents = [];
   const prompts = [];
@@ -254,7 +257,7 @@ export async function parseCodexRollout(path) {
     pending.inBytes += text.length;
     pending.inPreview = text.slice(0, 200);
     absEvents.push({ tsMs, kind: "prompt", label: userMessages === 1 ? "Initial prompt" : "User prompt" });
-    if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, 1500), preview: firstLineSummary(text) });
+    if (prompts.length < 100) prompts.push({ tsMs, text: text.slice(0, promptClip), preview: firstLineSummary(text) });
     else promptsCutAt ??= tsMs;
   };
 
@@ -293,8 +296,10 @@ export async function parseCodexRollout(path) {
       spawns.push({ task: typeof input.task_name === "string" ? input.task_name : null, fork: typeof input.fork_turns === "string" ? input.fork_turns !== "none" : input.fork_turns != null });
     }
     const id = p.call_id ?? p.id;
+    // a script's output can come before the call is recorded (it still had commands running)
+    if (id) keep?.set(id, { ...keep.get(id), input });
     let entry = null;
-    if (toolSequence.length < 300) {
+    if (toolSequence.length < maxCalls) {
       let preview = "";
       let full = "";
       if (command) { preview = command; full = command; }
@@ -329,6 +334,9 @@ export async function parseCodexRollout(path) {
     if (!p.call_id) return;
     const { body, isError } = out;
     ship.result(calls.get(p.call_id)?.shipped, body, isError);
+    const kept = keep?.get(p.call_id);
+    if (kept) Object.assign(kept, { output: body, isError: isError || !!kept.isError });
+    else keep?.set(p.call_id, { output: body, isError });
     const prev = resultById.get(p.call_id);
     resultById.set(p.call_id, {
       text: body.slice(0, 240),
@@ -383,6 +391,8 @@ export async function parseCodexRollout(path) {
     // The script's response may already be counted: its tools belong to that turn.
     onToolCall({ type: "function_call", name, call_id: id }, tsMs, input, script.turn?.tools ?? pending.tools);
     resultById.set(id, { text: body.slice(0, 240), truncated: body.length > 240, isError, bytes: body.length });
+    const kept = keep?.get(id);
+    if (kept) Object.assign(kept, { output: body, isError });
   };
 
   const onScriptOutput = (p) => {
@@ -406,6 +416,8 @@ export async function parseCodexRollout(path) {
     const r = resultById.get(callId);
     if (r) r.isError = true;
     else resultById.set(callId, { text: "", truncated: false, isError: true, bytes: 0 });
+    const kept = keep?.get(callId);
+    if (kept) kept.isError = true;
   };
 
   const onTokens = (info, tsMs) => {
@@ -569,7 +581,7 @@ export async function parseCodexRollout(path) {
     }
     if (entry.result) break;
   }
-  for (const entry of toolSequence) delete entry.id;
+  if (!keep) for (const entry of toolSequence) delete entry.id;
 
   const tokens = turns.reduce((acc, tu) => addTokens(acc, tu.tokens), emptyTokens());
   return {

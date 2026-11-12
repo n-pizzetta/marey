@@ -1441,7 +1441,7 @@ a:focus-visible,
   font-size: var(--fs-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 240px;
+  max-height: min(60vh, 640px);
   overflow-y: auto;
   color: var(--c-text-dim);
 }
@@ -1458,7 +1458,7 @@ a:focus-visible,
   font-size: var(--fs-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
+  max-height: min(50vh, 480px);
   overflow-y: auto;
   color: var(--c-text);
 }

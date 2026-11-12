@@ -35,6 +35,15 @@ function someTranscript() {
   throw new Error("no seeded transcript");
 }
 
+/**
+ * An opened session as a full parse gives it: its calls carry their id only once opened, for
+ * `sessionCall` to find them.
+ */
+function withoutCallIds(s) {
+  const strip = ({ id: _id, children, ...c }) => ({ ...c, ...(children ? { children: children.map(strip) } : {}) });
+  return { ...s, toolSequence: s.toolSequence.map(strip) };
+}
+
 test("light sessions match the full parse in the list, and in the detail once opened", async () => {
   const full = await parser.parseAllSessions();
   const light = await parser.parseAllSessions({ light: true });
@@ -43,8 +52,30 @@ test("light sessions match the full parse in the list, and in the detail once op
   for (const s of light.sessions) {
     const want = byId.get(s.id);
     assert.deepEqual(parser.summarizeSession(s), parser.summarizeSession(want), `list of ${s.id}`);
-    assert.deepEqual(await parser.sessionDetail(s), want, `detail of ${s.id}`);
+    assert.deepEqual(withoutCallIds(await parser.sessionDetail(s)), want, `detail of ${s.id}`);
   }
+});
+
+test("an opened session's calls come back whole, sub-agent calls included", async () => {
+  const { sessions } = await parser.parseAllSessions({ light: true });
+  let checked = 0;
+  for (const s of sessions) {
+    const detail = await parser.sessionDetail(s);
+    const calls = detail.toolSequence.flatMap((c) => [c, ...(c.children ?? [])]).filter((c) => !c.orphan);
+    for (const c of calls) {
+      assert.ok(c.id, `${s.id}: a call without id`);
+      const whole = await parser.sessionCall(s, c.id);
+      assert.equal(typeof whole.input, "object");
+      if (c.result) {
+        assert.equal(whole.output.text.length, c.result.bytes ?? whole.output.text.length);
+        assert.ok(whole.output.text.startsWith(c.result.text.slice(0, 50)), `${s.id}: result of ${c.id}`);
+        assert.equal(whole.isError, c.result.isError);
+      }
+      checked++;
+    }
+  }
+  assert.ok(checked > 0);
+  assert.equal(await parser.sessionCall(sessions[0], "no-such-call"), null);
 });
 
 test("light sessions keep no calls, timeline, file paths or prompt texts", async () => {
@@ -104,7 +135,7 @@ function longestTranscript() {
 /** Session `id` as the list and its detail show it, after a light or a full parse. */
 async function viewOf(id, { light }) {
   const s = (await parser.parseAllSessions({ light })).sessions.find((x) => x.id === id);
-  return { list: parser.summarizeSession(s), detail: light ? await parser.sessionDetail(s) : s };
+  return { list: parser.summarizeSession(s), detail: light ? withoutCallIds(await parser.sessionDetail(s)) : s };
 }
 
 test("reads only what was appended to a transcript being written, as a full parse would", async () => {
